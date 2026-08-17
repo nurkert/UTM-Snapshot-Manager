@@ -33,7 +33,11 @@ struct MachineDetailView: View {
     /// say why in their tooltip instead.
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
-        ToolbarItem(placement: .automatic) {
+        // Everything in one region on purpose. With the view switcher in
+        // `.automatic` and the actions in `.primaryAction`, collapsing the
+        // sidebar made AppKit re-home the items between regions and a button
+        // flashed in and out at the top right on every toggle.
+        ToolbarItemGroup(placement: .primaryAction) {
             Picker("View", selection: $model.detailMode) {
                 ForEach(AppModel.DetailMode.allCases) { mode in
                     Label(mode.label, systemImage: mode.symbol).tag(mode)
@@ -43,9 +47,7 @@ struct MachineDetailView: View {
             .labelsHidden()
             .disabled(vm.snapshots.isEmpty)
             .help("Switch between a plain list and the branching view")
-        }
 
-        ToolbarItemGroup(placement: .primaryAction) {
             powerButton
 
             Button {

@@ -18,6 +18,7 @@ struct SnapshotTreeView: View {
 
     var body: some View {
         let roots = lineage.tree(from: vm.snapshots)
+        let showsCurrentMarker = lineage.current == nil && !vm.snapshots.isEmpty
 
         ScrollView {
             // One container for all the cards: neighbouring glass surfaces
@@ -28,7 +29,7 @@ struct SnapshotTreeView: View {
                         TreeBranch(node: node, vm: vm, current: lineage.current)
                     }
 
-                    if lineage.current == nil && !vm.snapshots.isEmpty {
+                    if showsCurrentMarker {
                         unmarkedStateNote
                     }
                     if lineage.parents.isEmpty && vm.snapshots.count > 1 {
@@ -37,30 +38,36 @@ struct SnapshotTreeView: View {
                 }
             }
             .padding(.horizontal, 26)
-            .padding(.vertical, 24)
+            .padding(.vertical, 22)
             .frame(maxWidth: .infinity, alignment: .leading)
             // Connectors are drawn behind the cards from the dots' *measured*
             // positions. The previous version positioned them from constants —
             // a card that grew a second tag left its line pointing at nothing.
             .backgroundPreferenceValue(DotAnchors.self) { anchors in
                 GeometryReader { proxy in
-                    TreeConnectors(edges: edges(of: roots), anchors: anchors, proxy: proxy)
+                    TreeConnectors(
+                        spine: spine(of: roots, includingCurrentMarker: showsCurrentMarker),
+                        edges: edges(of: roots),
+                        anchors: anchors,
+                        proxy: proxy
+                    )
                 }
             }
         }
-        .background(alignment: .top) { wash }
     }
 
-    /// A faint wash at the top so the cards sit on something rather than
-    /// floating on the window's bare background. Bounded by the scroll view —
-    /// it must not bleed up into the toolbar.
-    private var wash: some View {
-        LinearGradient(
-            colors: [.accentColor.opacity(0.05), .clear],
-            startPoint: .top, endPoint: .bottom
-        )
-        .frame(height: 240)
-        .allowsHitTesting(false)
+    /// The points that sit on the trunk, top to bottom.
+    ///
+    /// Restore points with no recorded parent are roots, and a machine whose
+    /// history was never observed by this app is *all* roots — which drew as a
+    /// stack of identical cards and read as a plain list. They are not unrelated
+    /// though: they are the same machine at successive moments. One rail down
+    /// through them says that, and it is the line the branches peel off from
+    /// once there is a lineage to draw.
+    private func spine(of roots: [LineageNode], includingCurrentMarker: Bool) -> [String] {
+        var ids = roots.map(\.id)
+        if includingCurrentMarker { ids.append(TreeMetrics.currentMarkerID) }
+        return ids
     }
 
     /// Every parent → child pair in the drawn tree, flattened.
@@ -78,23 +85,49 @@ struct SnapshotTreeView: View {
 
     // MARK: - Notes
 
+    /// The machine has moved past every recorded point.
+    ///
+    /// Laid out exactly like a card — same marker column, same insets — so it
+    /// sits on the rail as the last stop rather than looking like a caption
+    /// that slid out from under the tree. It is deliberately not a card: there
+    /// is nothing here to restore to, and giving it a surface would invite the
+    /// click that a bordered box promises.
     private var unmarkedStateNote: some View {
         HStack(spacing: 14) {
             ZStack {
-                Circle().fill(.tint.opacity(0.16)).frame(width: 26, height: 26)
-                Circle().fill(.tint).frame(width: 9, height: 9)
+                Circle()
+                    .fill(Color(nsColor: .windowBackgroundColor))
+                    .frame(width: 14, height: 14)
+                Circle()
+                    .strokeBorder(.tint.opacity(0.45), style: StrokeStyle(lineWidth: 2, dash: [2.5, 2.5]))
+                    .frame(width: 14, height: 14)
             }
             .frame(width: TreeMetrics.markerSize, height: TreeMetrics.markerSize)
+            .anchorPreference(key: DotAnchors.self, value: .center) {
+                [TreeMetrics.currentMarkerID: $0]
+            }
 
             VStack(alignment: .leading, spacing: 1) {
-                Text("Current state")
-                    .font(.callout.weight(.medium))
+                // The symbol sits inside the title rather than in a column of
+                // its own: a card's text starts right after the marker, and an
+                // extra icon column here would push this line out of step with
+                // every card above it.
+                Label("Current state", systemImage: "clock.badge.questionmark")
+                    .font(.body.weight(.medium))
+                    .symbolRenderingMode(.hierarchical)
                 Text("Not saved to any restore point yet.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            Spacer(minLength: 12)
         }
-        .padding(.top, 6)
+        // Matches TreeNodeCard's insets so the text starts on the same line as
+        // every card above it.
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(maxWidth: TreeMetrics.cardMaxWidth, alignment: .leading)
+        .padding(.top, 2)
     }
 
     private var flatHistoryNote: some View {
@@ -112,11 +145,14 @@ struct SnapshotTreeView: View {
 private enum TreeMetrics {
     /// How far a child sits to the right of its parent.
     static let indent: CGFloat = 30
-    static let rowGap: CGFloat = 10
-    static let markerSize: CGFloat = 30
-    static let dotRadius: CGFloat = 8
+    static let rowGap: CGFloat = 6
+    static let markerSize: CGFloat = 26
+    static let dotRadius: CGFloat = 7
     static let corner: CGFloat = 11
     static let cardMaxWidth: CGFloat = 620
+    /// The trailing point on the rail when the machine has moved past every
+    /// recorded restore point.
+    static let currentMarkerID = "«current-state»"
 }
 
 // MARK: - Connectors
@@ -144,11 +180,32 @@ private struct DotAnchors: PreferenceKey {
 /// one spine with a branch peeling off at each row, and the geometry stays
 /// correct no matter how tall a card turns out to be.
 private struct TreeConnectors: View {
+    let spine: [String]
     let edges: [TreeEdge]
     let anchors: [String: Anchor<CGPoint>]
     let proxy: GeometryProxy
 
     var body: some View {
+        ZStack {
+            trunk
+            branches
+        }
+        .allowsHitTesting(false)
+    }
+
+    /// The straight rail through every point that has no parent, drawn fainter
+    /// than the branches so the eye reads it as ground rather than structure.
+    private var trunk: some View {
+        Path { path in
+            let points = spine.compactMap { anchors[$0] }.map { proxy[$0] }
+            guard let first = points.first, let last = points.last, points.count > 1 else { return }
+            path.move(to: CGPoint(x: first.x, y: first.y + TreeMetrics.dotRadius + 3))
+            path.addLine(to: CGPoint(x: last.x, y: last.y - TreeMetrics.dotRadius - 3))
+        }
+        .stroke(.quaternary, style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+    }
+
+    private var branches: some View {
         Path { path in
             for edge in edges {
                 guard let fromAnchor = anchors[edge.from],
@@ -171,10 +228,9 @@ private struct TreeConnectors: View {
             }
         }
         .stroke(
-            .quaternary,
+            .tertiary,
             style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round)
         )
-        .allowsHitTesting(false)
     }
 }
 
@@ -256,15 +312,21 @@ private struct TreeNodeCard: View {
 
             actions
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
         .frame(maxWidth: TreeMetrics.cardMaxWidth, alignment: .leading)
-        .glassCard(cornerRadius: 13, tint: isCurrent ? .accentColor : nil)
-        .overlay {
-            RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .strokeBorder(borderStyle, lineWidth: isSelected ? 2 : 1.5)
+        // Quiet by default. The earlier version filled the current node with
+        // solid accent and gave every card a drop shadow, which turned a list
+        // of five points into five heavy blocks. On macOS the surface carries
+        // the grouping and the accent marks one thing: where the machine is.
+        .background {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(fill)
         }
-        .shadow(color: .black.opacity(shadowOpacity), radius: isCurrent ? 10 : 5, y: 3)
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(borderStyle, lineWidth: isSelected ? 2 : 1)
+        }
         .contentShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
         .help(snapshot.absoluteDate)
         .onTapGesture { model.selectedSnapshotID = snapshot.id }
@@ -275,16 +337,16 @@ private struct TreeNodeCard: View {
         .accessibilityLabel(accessibilityLabel)
     }
 
-    private var borderStyle: AnyShapeStyle {
-        if isSelected { return AnyShapeStyle(Color.accentColor) }
-        if isCurrent { return AnyShapeStyle(Color.accentColor.opacity(0.45)) }
-        if isHovering { return AnyShapeStyle(Color.primary.opacity(0.12)) }
-        return AnyShapeStyle(Color.clear)
+    private var fill: AnyShapeStyle {
+        if isCurrent { return AnyShapeStyle(Color.accentColor.opacity(0.10)) }
+        if isHovering { return AnyShapeStyle(Color.primary.opacity(0.06)) }
+        return AnyShapeStyle(Color.primary.opacity(0.035))
     }
 
-    private var shadowOpacity: Double {
-        if isCurrent { return 0.14 }
-        return isHovering ? 0.11 : 0.07
+    private var borderStyle: AnyShapeStyle {
+        if isSelected { return AnyShapeStyle(Color.accentColor) }
+        if isCurrent { return AnyShapeStyle(Color.accentColor.opacity(0.40)) }
+        return AnyShapeStyle(Color.primary.opacity(0.07))
     }
 
     /// The dot on the spine. Publishes its centre so the connectors can be drawn
@@ -292,17 +354,20 @@ private struct TreeNodeCard: View {
     private var marker: some View {
         ZStack {
             if isCurrent {
-                Circle().fill(Color.accentColor.opacity(0.18)).frame(width: 30, height: 30)
+                Circle().fill(Color.accentColor.opacity(0.18)).frame(width: 24, height: 24)
             }
+            Circle()
+                .fill(Color(nsColor: .windowBackgroundColor))
+                .frame(width: 14, height: 14)
             Circle()
                 .strokeBorder(
                     (isCurrent || isBaseline ? Color.accentColor : .secondary)
                         .opacity(isCurrent ? 1 : 0.45),
                     lineWidth: 2
                 )
-                .frame(width: 16, height: 16)
+                .frame(width: 14, height: 14)
             if isCurrent {
-                Circle().fill(Color.accentColor).frame(width: 8, height: 8)
+                Circle().fill(Color.accentColor).frame(width: 7, height: 7)
             } else if isBaseline {
                 Image(systemName: "flag.fill")
                     .font(.system(size: 7, weight: .bold))
@@ -317,9 +382,8 @@ private struct TreeNodeCard: View {
     private var actions: some View {
         HStack(spacing: 6) {
             if isCurrent {
-                Text("You are here")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.tint)
+                TagLabel(text: String(localized: "You are here"),
+                         symbol: "location.fill", tint: .accentColor)
             } else {
                 // Click restores; the arrow adds "and start again", which is the
                 // loop this view exists for.

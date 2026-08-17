@@ -54,6 +54,10 @@ enum AppError: LocalizedError, Equatable {
     /// the reader looking in entirely the wrong place.
     case utmRefused(action: String, reason: String)
 
+    /// UTM does not know the identifier at all — the machine was removed from
+    /// its library, or this bundle is a copy of one that is in it.
+    case machineUnknownToUTM(name: String)
+
     /// The volume holding the machine's disks has almost nothing left. Checked
     /// before a write rather than discovered halfway through one: qcow2 grows
     /// as the guest writes, and a `qemu-img` run that runs out of room partway
@@ -89,6 +93,8 @@ enum AppError: LocalizedError, Equatable {
             return String(localized: "The operation could not be completed.")
         case .utmRefused(let action, _):
             return String(localized: "UTM refused: \(action.lowercased()).")
+        case .machineUnknownToUTM(let name):
+            return String(localized: "UTM does not know “\(name)”.")
         case .timedOut(let what, _):
             return String(localized: "\(what) took too long and was stopped.")
         case .automationDenied:
@@ -148,6 +154,9 @@ enum AppError: LocalizedError, Equatable {
 
         case .utmRefused(_, let reason):
             return reason
+
+        case .machineUnknownToUTM:
+            return String(localized: "It is not in UTM's library — either it was removed there, or this folder is a copy of a machine that is. Add it in UTM to start it from here; snapshots keep working either way. The list has been refreshed.")
 
         case .timedOut(_, let seconds):
             return String(localized: "No response after \(seconds) seconds. The disk may be on a network volume or another program is holding it open.")

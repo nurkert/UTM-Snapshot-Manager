@@ -584,7 +584,7 @@ final class AppModel: ObservableObject {
     func start(_ vm: VirtualMachine) async {
         guard let uuid = vm.uuid else { return }
         await run(Activity(title: String(localized: "Starting “\(vm.name)”…"))) {
-            try await UTMControl.start(machineWith: uuid)
+            try await UTMControl.start(machineWith: uuid, name: vm.name)
         }
         // Success or failure, what is on screen has to match reality afterwards.
         await refreshRunStates()
@@ -598,7 +598,7 @@ final class AppModel: ObservableObject {
         await run(Activity(title: title, detail: method == .request
             ? String(localized: "The guest decides when it is ready. This can take a moment.")
             : nil)) {
-            try await UTMControl.stop(machineWith: uuid, method: method)
+            try await UTMControl.stop(machineWith: uuid, method: method, name: vm.name)
             try await self.waitForStop(uuid: uuid)
         }
         await refreshRunStates()
@@ -607,7 +607,7 @@ final class AppModel: ObservableObject {
     func suspend(_ vm: VirtualMachine) async {
         guard let uuid = vm.uuid else { return }
         await run(Activity(title: String(localized: "Suspending “\(vm.name)”…"))) {
-            try await UTMControl.suspend(machineWith: uuid)
+            try await UTMControl.suspend(machineWith: uuid, name: vm.name)
         }
         await refreshRunStates()
     }
@@ -629,7 +629,7 @@ final class AppModel: ObservableObject {
             title: String(localized: "Shutting “\(machine.name)” down…"),
             detail: reason
         ))
-        try await UTMControl.stop(machineWith: uuid, method: .request)
+        try await UTMControl.stop(machineWith: uuid, method: .request, name: machine.name)
         try await waitForStop(uuid: uuid)
         return machine.with(state: .stopped)
     }
@@ -732,7 +732,7 @@ final class AppModel: ObservableObject {
 
             if restartAfter, let uuid = machine.uuid, machine.isRegisteredWithUTM {
                 await self.setActivity(Activity(title: String(localized: "Starting “\(machine.name)” again…")))
-                try await UTMControl.start(machineWith: uuid)
+                try await UTMControl.start(machineWith: uuid, name: vm.name)
             }
 
             await MainActor.run {

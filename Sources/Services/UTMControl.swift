@@ -149,11 +149,12 @@ enum UTMControl {
         case force
     }
 
-    static func start(machineWith uuid: String) async throws {
+    static func start(machineWith uuid: String, name: String) async throws {
         try await perform(
             "start virtual machine id \"\(uuid)\"",
             uuid: uuid,
-            what: String(localized: "Starting the machine")
+            what: String(localized: "Starting the machine"),
+                name: name
         )
     }
 
@@ -164,12 +165,13 @@ enum UTMControl {
     /// it as an error leaves the user staring at a failure for the outcome they
     /// wanted. It happens routinely — the guest can finish shutting down between
     /// the state poll and the click.
-    static func stop(machineWith uuid: String, method: StopMethod) async throws {
+    static func stop(machineWith uuid: String, method: StopMethod, name: String) async throws {
         do {
             try await perform(
                 "stop virtual machine id \"\(uuid)\" by \(method.rawValue)",
                 uuid: uuid,
-                what: String(localized: "Stopping the machine")
+                what: String(localized: "Stopping the machine"),
+                name: name
             )
         } catch AppError.utmRefused(_, let reason) where Self.meansAlreadyStopped(reason) {
             return
@@ -186,11 +188,12 @@ enum UTMControl {
     /// Parks the machine's memory state and quits QEMU. UTM writes this into the
     /// image's reserved `suspend` snapshot, which is exactly why a suspended
     /// machine still counts as unsafe to write to.
-    static func suspend(machineWith uuid: String) async throws {
+    static func suspend(machineWith uuid: String, name: String) async throws {
         try await perform(
             "suspend virtual machine id \"\(uuid)\" saving true",
             uuid: uuid,
-            what: String(localized: "Suspending the machine")
+            what: String(localized: "Suspending the machine"),
+                name: name
         )
     }
 
@@ -213,7 +216,13 @@ enum UTMControl {
         NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
     }
 
-    private static func perform(_ command: String, uuid: String, what: String) async throws {
+    /// UTM's answer when the identifier is not in its library at all.
+    static func meansUnknownMachine(_ message: String) -> Bool {
+        message.range(of: "get virtual machine", options: .caseInsensitive) != nil
+            || message.contains("-1728")
+    }
+
+    private static func perform(_ command: String, uuid: String, what: String, name: String) async throws {
         guard isInstalled else { throw AppError.utmMissing }
         guard isValidUUID(uuid) else { throw AppError.toolFailed(reason: String(localized: "This machine has no identifier UTM recognises.")) }
 
@@ -228,6 +237,9 @@ enum UTMControl {
         }
         guard result.ok else {
             if availability(forError: result.message) == .denied { throw AppError.automationDenied }
+            if meansUnknownMachine(result.message) {
+                throw AppError.machineUnknownToUTM(name: name)
+            }
             throw AppError.utmRefused(action: what, reason: readable(result.message))
         }
     }
