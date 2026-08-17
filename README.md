@@ -45,7 +45,9 @@ reasoning, the failure modes and the limits are written down in
 | **Restore points** | Create, restore and delete across every disk of a machine as a single unit. |
 | **Baselines** | Mark one point as the machine's reference state and return to it with a single action, shutdown and restart included. |
 | **Branching view** | Restore points shown as the tree they form, with the machine's current position marked. |
-| **Machine control** | Start, shut down and suspend through UTM's scripting interface, and jump to the selected machine in UTM for everything else. |
+| **Without shutting down** | Park the machine, take the point, resume — the guest keeps running and comes back where it was. |
+| **New machine from a point** | Turn any restore point into a separate machine that runs beside the original. |
+| **Machine control** | Start, shut down and suspend through UTM's scripting interface, add a machine to UTM's library, rename it, move it to the Trash, and jump to it in UTM for everything else. |
 | **Notes** | A restore point carries why it exists — the ticket, the sample, the build under test. |
 | **Diagnostics** | Read-only image integrity check (`qemu-img check`) across all disks. |
 | **Export** | Write a machine out as a complete, startable `.utm` at one restore point, optionally as a single compressed archive. The source is only read. |
@@ -110,7 +112,7 @@ than to a guess.
 Every push runs the full suite on a clean machine:
 
 ```sh
-Scripts/run-tests.sh      # 42 integration tests against real qcow2 images
+Scripts/run-tests.sh      # 59 integration tests against real qcow2 images
 Scripts/build-app.sh      # universal Release build, ad-hoc signed
 Scripts/make-dmg.sh       # verified disk image
 ```
@@ -137,7 +139,7 @@ rewritten. The original was explicitly a proof of concept.
 | Restore was irreversible | Safety snapshot, mandatory on multi-disk machines |
 | No machine control | Start, shut down and suspend via UTM |
 | No export | A complete, startable machine at any restore point |
-| No automated tests | 42 integration tests, run on every push |
+| No automated tests | 59 integration tests, run on every push |
 
 ---
 

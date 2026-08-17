@@ -141,6 +141,27 @@ finished machine.
 
 ---
 
+## 3b. A point may be taken on a parked machine, never restored to one
+
+Creating a restore point is allowed while UTM has the machine parked with
+`suspend saving`; restoring one is not, and that asymmetry is deliberate.
+
+Restoring rolls the disk back underneath a memory state that was written for the
+*old* contents — UTM then resumes stale RAM onto changed data, which is corruption
+with extra steps. Creating adds an entry to an image no process holds and leaves
+the current contents exactly as they are, memory state included. Nothing the
+parked machine depends on moves.
+
+This is what makes "take a point without shutting the guest down" possible: park,
+write the point on the quiet disk, resume. The point captures a cleanly parked
+disk rather than one caught mid-write, which is the property that matters. It
+does not carry the memory, so restoring it later boots rather than resumes.
+
+Reaching QEMU's live snapshot (`savevm`) would need its monitor, which UTM
+exposes only over its own SPICE port. That is not a limitation of the format.
+
+---
+
 ## 4. No shell injection
 
 Every external command is invoked with an argument array through `Process.arguments`, never a
