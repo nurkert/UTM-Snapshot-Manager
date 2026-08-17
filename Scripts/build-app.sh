@@ -49,11 +49,28 @@ set -e
 PRODUCT="$BUILD_DIR/Build/Products/$CONFIGURATION/$APP_NAME.app"
 [ -d "$PRODUCT" ] || fail "Build reported success but produced no app bundle."
 
-# Ad-hoc signature. Without a paid Developer ID this is the best available, and
-# it is what lets the app keep its Privacy permissions across rebuilds instead
-# of asking again every single time.
-blue "Signing (ad-hoc)…"
-codesign --force --sign - "$PRODUCT" >/dev/null 2>&1 || \
-  fail "Ad-hoc signing failed."
+# macOS keys Privacy permissions to the code signature, and an ad-hoc signature
+# is the binary's own hash — so every rebuild is a different application as far
+# as the system is concerned, and Documents access and UTM control have to be
+# granted all over again. During development that is the difference between
+# testing a change and spending the session in System Settings.
+#
+# A local self-signed certificate fixes it: the designated requirement then
+# names the certificate instead of the hash, and the grants survive every
+# rebuild. Create it once with Scripts/make-signing-cert.sh.
+#
+# Falls back to ad-hoc when that certificate is not installed, so a fresh clone
+# and the CI runner still build — they just pay the re-granting cost.
+SIGN_IDENTITY="${USM_SIGN_IDENTITY:-UTM Snapshot Manager Dev}"
+
+if security find-identity -v -p codesigning 2>/dev/null | grep -qF "$SIGN_IDENTITY"; then
+  blue "Signing as “${SIGN_IDENTITY}”…"
+  codesign --force --sign "$SIGN_IDENTITY" "$PRODUCT" >/dev/null 2>&1 || \
+    fail "Signing with “${SIGN_IDENTITY}” failed."
+else
+  blue "Signing (ad-hoc — macOS will ask for permissions again after this build)…"
+  codesign --force --sign - "$PRODUCT" >/dev/null 2>&1 || \
+    fail "Ad-hoc signing failed."
+fi
 
 echo "$PRODUCT"

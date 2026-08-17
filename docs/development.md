@@ -86,10 +86,37 @@ git push origin v2.1.0
 The tag triggers `.github/workflows/release.yml`, which runs the tests, builds, packages the
 disk image and publishes a GitHub release with the `.dmg` and its checksum.
 
-Builds are signed ad-hoc. Without a paid Apple Developer ID that is the strongest signature
-available, and it is why the disk image ships with a note about the first launch. The
-signature changes with every build, and macOS ties privacy permissions to it — so a rebuild
-prompts for folder access again. That affects developers, not people installing a release.
+Releases are signed ad-hoc. Without a paid Apple Developer ID that is the strongest signature
+available, and it is why the disk image ships with a note about the first launch.
+
+## Keeping your permissions across rebuilds
+
+macOS ties privacy permissions to an application's code signature, and an ad-hoc signature is
+the binary's own hash — so every rebuild is a different application as far as the system is
+concerned, and Documents access and UTM control have to be granted again. That is not a small
+annoyance: it makes each change cost a trip through System Settings before it can be tested at
+all, and it hides real bugs behind an app that simply cannot see anything.
+
+Run this once:
+
+```sh
+Scripts/make-signing-cert.sh
+```
+
+It puts a local self-signed code-signing certificate in your login keychain, and
+`Scripts/build-app.sh` signs with it when it is there. The designated requirement then names
+the certificate instead of the hash:
+
+```
+identifier "com.github.nurkert.UTMSnapshotManager" and certificate root = H"…"
+```
+
+Stable across rebuilds, so the permissions stay. Grant them once more after the first build
+that carries the new signature.
+
+The certificate is for local development only — not a Developer ID, no notarisation, and
+meaningless on any other Mac. Delete it from Keychain Access to undo; the build then falls
+back to ad-hoc. CI has no certificate and signs ad-hoc, which is what a release should be.
 
 ## Repository conventions
 

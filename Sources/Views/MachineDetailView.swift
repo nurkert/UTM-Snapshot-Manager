@@ -5,12 +5,19 @@ struct MachineDetailView: View {
     let vm: VirtualMachine
 
     var body: some View {
+        // The header keeps its natural height and `content` takes whatever is
+        // left. The stack itself must NOT be given an infinite height: with a
+        // height-filling child inside it, the stack grew past the column, the
+        // header was pushed above the visible top edge, and the oversized
+        // layout dragged the sidebar's own geometry with it — the window then
+        // read as completely empty even though every body had run with correct
+        // data.
         VStack(spacing: 0) {
             header
             Divider()
             content
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .navigationTitle(vm.name)
         .navigationSubtitle(vm.locationDescription)
         .toolbar { toolbar }
