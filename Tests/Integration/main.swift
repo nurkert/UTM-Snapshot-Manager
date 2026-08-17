@@ -256,6 +256,78 @@ Task {
             VMLibrary.isManagedByUTM(bundle: oddlyWritten, registry: registry))
 
     // ---------------------------------------------------------------------
+    say("\n[9b] A copy is not reported as running just because the original is")
+    // The defect this covers: two Debian bundles in different folders, one
+    // running, both shown as running. Two separate causes, both real.
+
+    // (a) UTM names disk images after a UUID, so a copied bundle has a disk with
+    //     the *same file name*. Matching a running process on the bare name
+    //     therefore matched the copy too.
+    let liveBundle = try! makeBundle(name: "Live", diskCount: 1)
+    let copyBundle = try! makeBundle(name: "Idle", diskCount: 1)
+    let liveVM = machine(from: liveBundle)
+    let copyVM = machine(from: copyBundle)
+
+    // Give both bundles a disk with an identical file name, as UTM would.
+    let sharedName = "\(UUID().uuidString.uppercased()).qcow2"
+    func renamedDisk(_ vm: VirtualMachine) -> DiskImage {
+        let target = vm.disks[0].url.deletingLastPathComponent()
+            .appendingPathComponent(sharedName)
+        try? FileManager.default.moveItem(at: vm.disks[0].url, to: target)
+        return DiskImage(identifier: vm.disks[0].identifier, url: target,
+                         interface: vm.disks[0].interface)
+    }
+    let liveDisk = renamedDisk(liveVM)
+    let copyDisk = renamedDisk(copyVM)
+
+    t.check("both bundles really do share a disk file name",
+            liveDisk.url.lastPathComponent == copyDisk.url.lastPathComponent)
+
+    // One QEMU, holding the live bundle's image by absolute path.
+    let qemuLine = "/usr/bin/qemu-system-aarch64 -drive if=none,media=disk,"
+        + "file.filename=\(liveDisk.url.path),discard=unmap"
+
+    t.check("the machine whose image is open is in use",
+            ProcessTable.diskUse(of: [liveDisk], commandLines: [qemuLine]) == .inUse)
+
+    t.check("the copy with the same file name is free",
+            ProcessTable.diskUse(of: [copyDisk], commandLines: [qemuLine]) == .free)
+
+    t.check("an unreadable process table answers unknown, never free",
+            ProcessTable.diskUse(of: [copyDisk], commandLines: nil) == .unknown)
+
+    // (b) The run state is looked up by the identifier in config.plist, which a
+    //     copy carries verbatim. Taking UTM's answer for a bundle UTM does not
+    //     manage handed the original's state straight to the copy.
+    t.check("the managed bundle takes UTM's running state",
+            VMLibrary.resolveState(
+                utmState: .running, isRegistered: true, hasSuspendState: false,
+                diskUse: .free, utmAvailability: .ready
+            ) == .running)
+
+    t.check("an unmanaged copy does not inherit it",
+            VMLibrary.resolveState(
+                utmState: .running, isRegistered: false, hasSuspendState: false,
+                diskUse: .free, utmAvailability: .ready
+            ) == .stopped)
+
+    // The copy is still caught when a process really does hold *its* image —
+    // a QEMU started by hand, or one UTM has since lost track of.
+    t.check("a process holding the copy's own image still marks it running",
+            VMLibrary.resolveState(
+                utmState: nil, isRegistered: false, hasSuspendState: false,
+                diskUse: .inUse, utmAvailability: .ready
+            ) == .running)
+
+    // And an unmanaged bundle whose disks cannot be checked stays unknown,
+    // which blocks every write. Not knowing is never a reason to unlock a disk.
+    t.check("unmanaged and unverifiable stays unknown",
+            VMLibrary.resolveState(
+                utmState: nil, isRegistered: false, hasSuspendState: false,
+                diskUse: .unknown, utmAvailability: .ready
+            ) == .unknown)
+
+    // ---------------------------------------------------------------------
     say("\n[10] A disk added since the last scan stops the write")
     // The model carries the disk list from the last scan. Adding a disk in UTM
     // and then restoring must not roll back the known disks and quietly leave

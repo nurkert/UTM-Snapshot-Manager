@@ -96,14 +96,18 @@ enum ProcessTable {
 
     static func diskUse(of disks: [DiskImage], commandLines: [String]?) -> DiskUse {
         guard let commandLines else { return .unknown }
+        // Matched on the full path only.
+        //
+        // Matching the bare file name as well used to look like a cheap way to
+        // catch a process that lists its image relatively — but UTM names images
+        // after a UUID, and a duplicated bundle carries that same file name. Two
+        // copies of one machine in different folders were therefore both
+        // reported as running whenever either of them was, which is precisely
+        // the confusion this app exists to prevent. UTM launches QEMU with
+        // absolute paths, so nothing real was gained by the looser match.
         let inUse = disks.contains { disk in
-            // The full path is the reliable match, but a process started from
-            // inside the machine's folder lists its image relatively. UTM names
-            // images after a UUID, so the bare file name is specific enough to
-            // be worth checking too.
-            commandLines.contains {
-                $0.contains(disk.url.path) || $0.contains(disk.url.lastPathComponent)
-            }
+            let path = disk.url.standardizedFileURL.path
+            return commandLines.contains { $0.contains(path) }
         }
         return inUse ? .inUse : .free
     }

@@ -173,7 +173,7 @@ struct VMLibrary: Sendable {
             backend: bundle.backend,
             disks: bundle.disks,
             snapshots: snapshots,
-            state: resolveState(
+            state: Self.resolveState(
                 utmState: utmState,
                 isRegistered: isRegistered,
                 hasSuspendState: hasSuspendState || (registryEntry?.isSuspended ?? false),
@@ -200,14 +200,30 @@ struct VMLibrary: Sendable {
     /// still hold it, so that case falls back to the process table. And when UTM
     /// is installed, running, and refuses to answer, the honest result is
     /// `.unknown` — which blocks writes rather than guessing "probably fine".
-    private func resolveState(
+    static func resolveState(
         utmState: RunState?,
         isRegistered: Bool,
         hasSuspendState: Bool,
         diskUse: ProcessTable.DiskUse,
         utmAvailability: UTMControl.Availability
     ) -> RunState {
-        if let utmState, utmState != .stopped { return utmState }
+        // UTM's answer counts only for the bundle UTM actually manages.
+        //
+        // The state is looked up by the identifier in config.plist, and a
+        // duplicated bundle carries the original's identifier — so taking it
+        // unconditionally reported a copy sitting in another folder as running
+        // whenever the original was. The copy then showed a running badge, its
+        // controls went dead, and the two machines were indistinguishable in
+        // exactly the situation where telling them apart matters most.
+        //
+        // A bundle UTM does not manage cannot be running *under UTM*; if a
+        // process holds its images the check below still catches it, matched on
+        // the full path. This is the display state. The gate in front of a write
+        // stays deliberately broader — see verifyWritable, which asks UTM about
+        // any identifier it lists regardless of managed status, because asking
+        // too widely costs a refused click and asking too narrowly costs a file
+        // system.
+        if isRegistered, let utmState, utmState != .stopped { return utmState }
 
         // A process holding one of this bundle's own images outranks anything
         // UTM says. It is matched on the file path, so it stays right even when
@@ -222,7 +238,7 @@ struct VMLibrary: Sendable {
 
         // UTM manages this machine and says it is off. That is authoritative,
         // whatever the process table did or did not manage to tell us.
-        if utmState == .stopped { return .stopped }
+        if isRegistered, utmState == .stopped { return .stopped }
 
         // From here on UTM had nothing to say about this bundle, so the process
         // table was the only remaining source — and if it failed, we genuinely
