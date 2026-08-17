@@ -52,6 +52,8 @@ struct RootView: View {
             NoteSheet(snapshot: snapshot, machineID: machineID)
         case .addToUTM(let machineID):
             AddToUTMSheet(machineID: machineID)
+        case .trash(let machineID):
+            TrashMachineSheet(machineID: machineID)
         }
     }
 }

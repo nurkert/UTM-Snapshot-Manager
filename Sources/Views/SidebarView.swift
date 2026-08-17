@@ -58,6 +58,13 @@ struct SidebarView: View {
                 Button("Add to UTM…") { model.sheet = .addToUTM(machine: vm.id) }
             }
         }
+
+        Divider()
+
+        Button("Move to Trash…", role: .destructive) {
+            model.sheet = .trash(machine: vm.id)
+        }
+        .disabled(model.activity != nil)
     }
 
     /// Says which of the three it is, because "Searching…" forever is how a

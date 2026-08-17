@@ -35,6 +35,7 @@ enum SheetRoute: Identifiable, Equatable {
     case welcome
     case note(Snapshot, machine: VirtualMachine.ID)
     case addToUTM(machine: VirtualMachine.ID)
+    case trash(machine: VirtualMachine.ID)
 
     var id: String {
         switch self {
@@ -46,6 +47,7 @@ enum SheetRoute: Identifiable, Equatable {
         case .welcome: return "welcome"
         case .note(let s, let m): return "note-\(m)-\(s.id)"
         case .addToUTM(let m): return "add-\(m)"
+        case .trash(let m): return "trash-\(m)"
         }
     }
 }
@@ -931,6 +933,32 @@ final class AppModel: ObservableObject {
         throw AppError.timedOut(
             what: String(localized: "Waiting for UTM to add the machine"), seconds: Int(timeout)
         )
+    }
+
+    /// Moves a machine's whole folder to the Trash.
+    ///
+    /// The Trash rather than a delete, deliberately: this removes every restore
+    /// point along with the machine, and the one thing that makes that
+    /// recoverable is that macOS keeps it until the user empties it.
+    ///
+    /// Gated on the same check as a write. A folder whose disks a QEMU process
+    /// still holds must not be moved out from under it, and "is anything using
+    /// this" is exactly the question `verifyWritable` answers — including the
+    /// paused and suspended states that a process listing alone would miss.
+    func moveToTrash(_ machineID: VirtualMachine.ID) async {
+        guard let vm = machine(machineID), let library else { return }
+
+        await run(Activity(title: String(localized: "Moving “\(vm.name)” to the Trash…"))) {
+            try await library.verifyWritable(vm)
+
+            var trashed: NSURL?
+            try FileManager.default.trashItem(at: vm.url, resultingItemURL: &trashed)
+
+            await MainActor.run {
+                self.lastOutcome = String(localized: "“\(vm.name)” is in the Trash. Nothing is gone until you empty it.")
+            }
+        }
+        await refresh()
     }
 
     // MARK: - Navigation helpers
