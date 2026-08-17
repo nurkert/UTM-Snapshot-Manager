@@ -58,6 +58,8 @@ struct RootView: View {
             RenameMachineSheet(machineID: machineID)
         case .newMachine(let snapshot, let machineID):
             NewMachineSheet(snapshot: snapshot, machineID: machineID)
+        case .cleanUp(let machineID):
+            CleanUpSheet(machineID: machineID)
         }
     }
 }
@@ -215,9 +217,9 @@ struct NoticeBar<Actions: View>: View {
                 .foregroundStyle(tint)
 
             VStack(alignment: .leading, spacing: 1) {
-                // See BlockerBanner: fixedSize inside an HStack with a Spacer
-                // makes the bar demand its unwrapped width and blows the layout
-                // out past the window.
+                // See BlockerBanner: fixedSize here makes the hierarchy report
+                // a fitting height several times the window's, which pushes
+                // everything above it out of view.
                 Text(title)
                     .font(.callout.weight(.medium))
                 if let detail {

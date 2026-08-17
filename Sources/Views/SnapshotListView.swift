@@ -106,6 +106,14 @@ struct SnapshotRow: View {
                                 .padding(.vertical, 1)
                                 .background(Capsule().fill(.tint.opacity(0.18)))
                         }
+                        if model.isAutomaticBackup(snapshot, in: vm) {
+                            Text("Automatic")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 1)
+                                .background(Capsule().fill(Color.primary.opacity(0.08)))
+                        }
                     }
                     Text(subtitle)
                         .font(.caption)

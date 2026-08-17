@@ -52,6 +52,11 @@ struct SidebarView: View {
         }
         Divider()
 
+        if !vm.snapshots.isEmpty {
+            Button("Clean Up Restore Points…") { model.sheet = .cleanUp(machine: vm.id) }
+                .disabled(model.activity != nil)
+        }
+
         Button("Rename…") { model.sheet = .rename(machine: vm.id) }
             .disabled(model.activity != nil)
 

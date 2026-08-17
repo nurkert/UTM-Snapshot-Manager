@@ -17,6 +17,7 @@ struct RestoreSheet: View {
     let restartAfter: Bool
 
     @State private var keepSafetyCopy = true
+    @State private var hasLoadedChoice = false
     @State private var restart: Bool
 
     init(snapshot: Snapshot, machineID: VirtualMachine.ID, restartAfter: Bool) {
@@ -115,7 +116,14 @@ struct RestoreSheet: View {
         .padding(22)
         .frame(width: 500)
         .onAppear {
-            if mustKeepSafetyCopy { keepSafetyCopy = true }
+            guard !hasLoadedChoice else { return }
+            hasLoadedChoice = true
+            // Remembered per machine: turning it off for a scratch VM should not
+            // have to be repeated on every single rollback.
+            keepSafetyCopy = mustKeepSafetyCopy || (vm.map { model.keepsSafetyCopy(for: $0) } ?? true)
+        }
+        .onChange(of: keepSafetyCopy) {
+            if let vm, !mustKeepSafetyCopy { model.setKeepsSafetyCopy(keepSafetyCopy, for: vm) }
         }
     }
 
@@ -135,8 +143,12 @@ struct RestoreSheet: View {
     }
 
     private var safetyDetail: String {
-        mustKeepSafetyCopy
-            ? String(localized: "Required for machines with several disks: if a rollback fails partway it cannot be undone, and this is the only way back.")
+        if mustKeepSafetyCopy {
+            return String(localized: "Required for machines with several disks: if a rollback fails partway it cannot be undone, and this is the only way back.")
+        }
+        let kept = model.automaticBackupsKept
+        return kept > 0
+            ? String(localized: "Recommended. Creates an extra restore point so this step stays reversible — the last \(kept) are kept and older ones tidy themselves away.")
             : String(localized: "Recommended. Creates an extra restore point so this step stays reversible.")
     }
 }

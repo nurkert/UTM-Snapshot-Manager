@@ -38,6 +38,7 @@ enum SheetRoute: Identifiable, Equatable {
     case trash(machine: VirtualMachine.ID)
     case rename(machine: VirtualMachine.ID)
     case newMachine(Snapshot, machine: VirtualMachine.ID)
+    case cleanUp(machine: VirtualMachine.ID)
 
     var id: String {
         switch self {
@@ -52,6 +53,7 @@ enum SheetRoute: Identifiable, Equatable {
         case .trash(let m): return "trash-\(m)"
         case .rename(let m): return "rename-\(m)"
         case .newMachine(let s, let m): return "fork-\(m)-\(s.id)"
+        case .cleanUp(let m): return "cleanup-\(m)"
         }
     }
 }
@@ -177,6 +179,110 @@ final class AppModel: ObservableObject {
         machines.first { $0.id == machineID }?.recordKey ?? machineID
     }
 
+    // MARK: - Automatic safety copies
+
+    /// Which restore points this app made on its own before a rollback.
+    ///
+    /// Recorded rather than recognised by name. The name is localised and the
+    /// user can rename nothing in qcow2 but could well have their own point
+    /// called "Automatic backup" — and the one thing pruning must never do is
+    /// delete something a person saved deliberately. A recorded set cannot be
+    /// fooled by a coincidence of wording.
+    @Published private(set) var automaticBackups: [String: Set<String>] = [:]
+
+    /// How many automatic copies to keep per machine.
+    ///
+    /// The loop this app is built for — roll back, run, roll back — makes one
+    /// of these every time round. Keeping all of them turns a week of work into
+    /// a list nobody reads; keeping none removes the only way back from a
+    /// rollback you regret. Three is enough to undo a mistake you notice late,
+    /// and few enough to stay invisible.
+    @Published var automaticBackupsKept: Int = 3 {
+        didSet { UserDefaults.standard.set(automaticBackupsKept, forKey: autoKeepKey) }
+    }
+
+    /// Whether a rollback of this machine saves the current state first.
+    ///
+    /// Remembered per machine: someone who turns it off for a scratch VM should
+    /// not have to turn it off again on every single rollback. Mandatory on
+    /// multi-disk machines regardless — there a half-failed rollback cannot be
+    /// undone any other way.
+    func keepsSafetyCopy(for vm: VirtualMachine) -> Bool {
+        if vm.disks.count > 1 { return true }
+        return safetyCopyChoices[vm.recordKey] ?? true
+    }
+
+    func setKeepsSafetyCopy(_ keep: Bool, for vm: VirtualMachine) {
+        guard vm.disks.count <= 1 else { return }
+        safetyCopyChoices[vm.recordKey] = keep
+        UserDefaults.standard.set(safetyCopyChoices, forKey: safetyChoiceKey)
+    }
+
+    @Published private(set) var safetyCopyChoices: [String: Bool] = [:]
+
+    func isAutomaticBackup(_ snapshot: Snapshot, in vm: VirtualMachine) -> Bool {
+        automaticBackups[vm.recordKey]?.contains(snapshot.name) ?? false
+    }
+
+    private func recordAutomaticBackup(named name: String, for key: String) {
+        automaticBackups[key, default: []].insert(name)
+        saveAutomaticBackups()
+    }
+
+    private func forgetAutomaticBackup(named name: String, for key: String) {
+        automaticBackups[key]?.remove(name)
+        if automaticBackups[key]?.isEmpty == true { automaticBackups[key] = nil }
+        saveAutomaticBackups()
+    }
+
+    /// Removes automatic copies beyond the keep count, oldest first.
+    ///
+    /// Deliberately narrow. It only ever touches points this app recorded as its
+    /// own, never the baseline, and never the point the machine is currently
+    /// sitting on — losing the way back to where you are would be a strange way
+    /// to tidy up. Failures are swallowed: this is housekeeping that ran after
+    /// the operation the user actually asked for succeeded, and turning it into
+    /// an error message would report a success as a failure.
+    private func pruneAutomaticBackups(on machineID: VirtualMachine.ID) async {
+        guard automaticBackupsKept > 0, let vm = machine(machineID), let library else { return }
+        let key = vm.recordKey
+        guard let recorded = automaticBackups[key], !recorded.isEmpty else { return }
+
+        let protectedNames = Set([baselines[key], lineage(for: vm).current].compactMap { $0 })
+        let candidates = vm.snapshots
+            .filter { recorded.contains($0.name) && !protectedNames.contains($0.name) }
+            .sorted { $0.date > $1.date }
+
+        guard candidates.count > automaticBackupsKept else { return }
+
+        for snapshot in candidates.dropFirst(automaticBackupsKept) {
+            do {
+                try await library.delete(snapshot, on: vm)
+                updateLineage(for: vm.id) { $0.forget(snapshot.name) }
+                forgetAutomaticBackup(named: snapshot.name, for: key)
+            } catch {
+                return
+            }
+        }
+    }
+
+    private func saveAutomaticBackups() {
+        let plain = automaticBackups.mapValues(Array.init)
+        guard let data = try? JSONEncoder().encode(plain) else { return }
+        UserDefaults.standard.set(data, forKey: autoBackupKey)
+    }
+
+    private func loadAutomaticBackups() {
+        if let data = UserDefaults.standard.data(forKey: autoBackupKey),
+           let decoded = try? JSONDecoder().decode([String: [String]].self, from: data) {
+            automaticBackups = decoded.mapValues(Set.init)
+        }
+        safetyCopyChoices = UserDefaults.standard.dictionary(forKey: safetyChoiceKey) as? [String: Bool] ?? [:]
+        if UserDefaults.standard.object(forKey: autoKeepKey) != nil {
+            automaticBackupsKept = UserDefaults.standard.integer(forKey: autoKeepKey)
+        }
+    }
+
     // MARK: - Notes
 
     /// What a restore point was for, in the user's own words.
@@ -251,6 +357,9 @@ final class AppModel: ObservableObject {
     private let welcomeKey = "hasSeenWelcome"
     private let lineageKey = "snapshotLineages"
     private let notesKey = "snapshotNotes"
+    private let autoBackupKey = "automaticBackups"
+    private let autoKeepKey = "automaticBackupsKept"
+    private let safetyChoiceKey = "safetyCopyChoices"
     private let detailModeKey = "detailMode"
 
     private var hasLoadedOnce = false
@@ -316,6 +425,7 @@ final class AppModel: ObservableObject {
         baselines = (UserDefaults.standard.dictionary(forKey: baselineKey) as? [String: String]) ?? [:]
         loadLineages()
         loadNotes()
+        loadAutomaticBackups()
         if let raw = UserDefaults.standard.string(forKey: detailModeKey),
            let mode = DetailMode(rawValue: raw) {
             detailMode = mode
@@ -739,6 +849,7 @@ final class AppModel: ObservableObject {
                 try await library.createSnapshot(named: safetyName, on: machine)
                 await MainActor.run {
                     self.updateLineage(for: machine.id) { $0.recordSnapshot(named: safetyName) }
+                    self.recordAutomaticBackup(named: safetyName, for: machine.recordKey)
                 }
             }
 
@@ -761,6 +872,8 @@ final class AppModel: ObservableObject {
             }
         }
         await refresh()
+        // Housekeeping, after the thing the user asked for has already worked.
+        await pruneAutomaticBackups(on: machineID)
     }
 
     /// Saves a restore point without shutting the guest down.
@@ -832,10 +945,59 @@ final class AppModel: ObservableObject {
             await MainActor.run {
                 if self.baselines[vm.recordKey] == snapshot.name { self.setBaseline(nil, for: vm) }
                 self.updateLineage(for: vm.id) { $0.forget(snapshot.name) }
+                self.forgetAutomaticBackup(named: snapshot.name, for: vm.recordKey)
                 self.lastOutcome = String(localized: "Deleted “\(snapshot.name)”.")
             }
         }
         await refresh()
+    }
+
+    /// Deletes several restore points in one operation.
+    ///
+    /// Reported as one outcome rather than one alert per point, and it does not
+    /// stop at the first failure: a point that will not go is named at the end
+    /// while the rest are still removed. Stopping halfway would leave the user
+    /// to work out which of the twelve they picked actually went.
+    func deletePoints(named names: Set<String>, on machineID: VirtualMachine.ID) async {
+        guard let vm = machine(machineID), let library, !names.isEmpty else { return }
+
+        let targets = vm.snapshots.filter { names.contains($0.name) }
+        var removed = 0
+        var failed: [String] = []
+
+        await run(Activity(
+            title: String(localized: "Deleting \(targets.count) restore points…")
+        )) {
+            for (index, snapshot) in targets.enumerated() {
+                await self.setActivity(Activity(
+                    title: String(localized: "Deleting \(targets.count) restore points…"),
+                    detail: String(localized: "\(index + 1) of \(targets.count): “\(snapshot.name)”")
+                ))
+                do {
+                    try await library.delete(snapshot, on: vm)
+                    removed += 1
+                    await MainActor.run {
+                        if self.baselines[vm.recordKey] == snapshot.name { self.setBaseline(nil, for: vm) }
+                        self.updateLineage(for: vm.id) { $0.forget(snapshot.name) }
+                        self.forgetAutomaticBackup(named: snapshot.name, for: vm.recordKey)
+                        self.setNote(nil, for: snapshot, in: vm)
+                    }
+                } catch {
+                    failed.append(snapshot.name)
+                }
+            }
+        }
+
+        await refresh()
+
+        if failed.isEmpty {
+            lastOutcome = String(localized: "Deleted \(removed) restore points.")
+        } else {
+            alert = AppAlert(
+                title: String(localized: "\(failed.count) could not be deleted"),
+                message: String(localized: "Removed \(removed). These are still there: \(failed.formatted(.list(type: .and))).")
+            )
+        }
     }
 
     // MARK: - Read-only tools

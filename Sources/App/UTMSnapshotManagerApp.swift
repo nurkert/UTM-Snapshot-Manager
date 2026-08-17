@@ -165,6 +165,12 @@ struct AppCommands: Commands {
 
             Divider()
 
+            Button("Clean Up…") {
+                if let vm { model.sheet = .cleanUp(machine: vm.id) }
+            }
+            .keyboardShortcut("k", modifiers: [.command, .option])
+            .disabled(vm?.snapshots.isEmpty != false || isBusy)
+
             Button("Delete…") {
                 if let snapshot, let vm { model.sheet = .delete(snapshot, machine: vm.id) }
             }

@@ -349,6 +349,12 @@ private struct TreeNodeCard: View {
                         TagLabel(text: String(localized: "Incomplete"),
                                  symbol: "exclamationmark.triangle.fill", tint: .orange)
                     }
+                    // Says this one is the app's, not yours — and therefore
+                    // that it will tidy itself away.
+                    if model.isAutomaticBackup(snapshot, in: vm) {
+                        TagLabel(text: String(localized: "Automatic"),
+                                 symbol: "clock.arrow.circlepath", tint: .secondary)
+                    }
                 }
 
                 Text(subtitle)

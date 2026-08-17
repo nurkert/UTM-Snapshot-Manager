@@ -279,13 +279,19 @@ struct BlockerBanner: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.callout.weight(.semibold))
-                    // No .fixedSize here. Inside an HStack that also holds a
-                    // Spacer, `fixedSize(vertical: true)` makes the text ask for
-                    // its unwrapped width, the bar demands that width, and the
-                    // whole split view is laid out far wider than the window —
-                    // at which point nothing is visible at all. Text wraps on
-                    // its own; the modifier is only needed where a parent
-                    // actively compresses it.
+                    // No .fixedSize here — measured, not guessed.
+                    //
+                    // Inside this banner, in a NavigationSplitView detail
+                    // column proposed 900x612, `fixedSize(vertical: true)`
+                    // makes the whole hierarchy report a fitting height of
+                    // 2496pt. Four times the window. The header is pushed above
+                    // the visible top edge and the sidebar's geometry goes with
+                    // it, so the window reads as completely empty while every
+                    // view body has run correctly.
+                    //
+                    // Text wraps on its own. The modifier is only needed where a
+                    // parent actively compresses it, which nothing here does.
+                    // Tests/Layout measures this.
                 Text(message)
                     .font(.callout)
                     .foregroundStyle(.secondary)
