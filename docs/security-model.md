@@ -121,6 +121,26 @@ mechanism, not something the application can hide.
 
 ---
 
+## 3a. An export is a machine, not a loose image
+
+Exporting writes a complete `.utm` bundle: the configuration is copied, every
+disk is converted down to the chosen restore point, and **the copy is given a
+new identifier**.
+
+That last step is a safety property, not a convenience. UTM keys its library on
+the identifier in `config.plist`, so a bundle carrying the original's identifier
+reproduces on the receiving Mac exactly the ambiguity section 2 exists to
+prevent — two bundles, one identity, and no way to tell which one a command
+means.
+
+The source is only ever read (`qemu-img convert -U`), so exporting a running
+machine is safe and is not blocked. A restore point missing from any disk is
+refused: the result would boot with its disks at different points in time. A run
+that fails partway is removed, so nothing is left that could be mistaken for a
+finished machine.
+
+---
+
 ## 4. No shell injection
 
 Every external command is invoked with an argument array through `Process.arguments`, never a
