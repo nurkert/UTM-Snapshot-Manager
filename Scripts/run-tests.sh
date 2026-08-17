@@ -30,11 +30,17 @@ swiftc -o "$BIN" \
 green "Integration tests passed."
 
 # The interface is checked separately, by launching the app — see
-# Scripts/smoke-test.sh for why it cannot be done headlessly. Skipped rather
-# than failed where there is no graphical session, so this stays runnable over
-# SSH and in CI.
+# Scripts/smoke-test.sh for why it cannot be done headlessly.
+#
+# Only when a build is already lying around. This script otherwise compiles just
+# the service and model layer, and having it build a whole application on the
+# side turns a fifteen-second test run into a two-minute one — and fails outright
+# on a machine set up only to run the tests, which is what the CI test job is.
+APP="build/Build/Products/Release/UTM Snapshot Manager.app"
 if [ "${USM_SKIP_SMOKE:-}" = "1" ]; then
   echo "Smoke test skipped (USM_SKIP_SMOKE=1)."
+elif [ -d "$APP" ]; then
+  Scripts/smoke-test.sh "$APP" || fail "Smoke test failed."
 else
-  Scripts/smoke-test.sh || fail "Smoke test failed."
+  echo "Smoke test skipped (no build — run Scripts/smoke-test.sh after building)."
 fi

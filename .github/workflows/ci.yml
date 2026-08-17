@@ -58,3 +58,11 @@ jobs:
           lipo -archs "$APP/Contents/MacOS/UTM Snapshot Manager" | grep -q arm64
           codesign --verify --verbose=1 "$APP"
           /usr/libexec/PlistBuddy -c 'Print :NSAppleEventsUsageDescription' "$APP/Contents/Info.plist"
+
+      # Belongs here rather than in the test job: this is where the application
+      # exists. It skips itself where there is no window server or no Screen
+      # Recording permission, which on a hosted runner is the usual case — so it
+      # is a guard for anyone running CI on their own machine rather than a
+      # promise about the runner.
+      - name: Smoke test the window
+        run: Scripts/smoke-test.sh "build/Build/Products/Release/UTM Snapshot Manager.app"
