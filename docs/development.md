@@ -14,7 +14,8 @@ compile time — an older SDK fails to build.
 
 | Command | Purpose |
 | --- | --- |
-| `Scripts/run-tests.sh` | Integration tests against real `qcow2` images |
+| `Scripts/run-tests.sh` | Integration tests against real `qcow2` images, then the smoke test |
+| `Scripts/smoke-test.sh` | Launches the built app and checks its window draws content |
 | `Scripts/build-app.sh` | Universal Release build, ad-hoc signed. Prints the bundle path. |
 | `Scripts/make-dmg.sh` | Packages and verifies `dist/UTM-Snapshot-Manager-<version>.dmg` |
 | `./install.sh` | Builds and installs into `/Applications` |
@@ -52,6 +53,30 @@ as thoroughly as the successful paths:
 | Disk layout | A disk added since the last scan stopping the write |
 | Injection | A name containing shell metacharacters stored, not executed |
 | Read-only tools | Integrity check and export |
+
+## The one test that touches the interface
+
+`Scripts/smoke-test.sh` launches the built application, waits for its window,
+captures it and measures how much of the *content area* differs from its
+background. A window that rendered nothing is one flat fill and scores near
+zero; anything with rows, text and controls in it scores far higher.
+
+It exists because of a defect the integration tests could not have found: with a
+machine selected, the window drew its toolbar and nothing else while every view
+body ran with correct data, the process sat at 0% CPU and nothing was logged.
+
+Two headless approaches were tried first and both **passed the broken build**.
+Measuring the views in an `NSHostingView` gives identical numbers with and
+without the defect. A first version of this smoke test measured the whole
+window and also passed, because the title bar and toolbar alone account for a
+quarter of the pixels — which is why it now crops them off. Each of those was
+verified by reintroducing a fault and watching the test fail, not by reasoning
+about it.
+
+Set `USM_SKIP_SMOKE=1` to skip it. It needs a graphical session and Screen
+Recording permission; without either it reports that it could not check rather
+than failing, because "this machine cannot run the test" and "the app is
+broken" are different answers.
 
 One test needs a genuinely running machine and is therefore opt-in:
 

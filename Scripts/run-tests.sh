@@ -26,3 +26,13 @@ swiftc -o "$BIN" \
 
 "$BIN"
 green "Integration tests passed."
+
+# The interface is checked separately, by launching the app — see
+# Scripts/smoke-test.sh for why it cannot be done headlessly. Skipped rather
+# than failed where there is no graphical session, so this stays runnable over
+# SSH and in CI.
+if [ "${USM_SKIP_SMOKE:-}" = "1" ]; then
+  echo "Smoke test skipped (USM_SKIP_SMOKE=1)."
+else
+  Scripts/smoke-test.sh || fail "Smoke test failed."
+fi
