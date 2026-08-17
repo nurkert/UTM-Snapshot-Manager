@@ -19,6 +19,8 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 BIN="$WORK/integration-tests"
 
+Scripts/lint-shell.sh
+
 swiftc -o "$BIN" \
   Sources/Services/*.swift \
   Sources/Model/*.swift \

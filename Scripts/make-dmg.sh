@@ -39,7 +39,7 @@ first launch needs one extra step:
 Only the first launch needs this. Double-clicking works from then on.
 EOF
 
-blue "Building $DMG…"
+blue "Building ${DMG}…"
 
 # hdiutil output is deliberately not silenced. On a build machine this is the
 # only place a failure explains itself, and hiding it once cost an entire
