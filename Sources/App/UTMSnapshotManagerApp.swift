@@ -11,7 +11,12 @@ struct UTMSnapshotManagerApp: App {
                 .environmentObject(model)
                 .task { await model.bootstrap() }
         }
-        .defaultSize(width: 1080, height: 720)
+        .defaultSize(width: 1180, height: 760)
+        // Without this the scene keeps sizing itself and defaultSize is
+        // ignored: the window opened at whatever macOS picked, which on this
+        // display was 1038x612 — narrow enough that the restore points and the
+        // machine header competed for the same room on first run.
+        .windowResizability(.contentMinSize)
         .commands { AppCommands(model: model) }
     }
 }
@@ -52,6 +57,14 @@ struct AppCommands: Commands {
             }
             .keyboardShortcut("p", modifiers: [.command, .shift])
             .disabled(vm?.canStop != true || isBusy)
+
+            Toggle("Save a Point Before Starting", isOn: Binding(
+                get: { vm.map { model.isArmed($0) } ?? false },
+                set: { on in if let vm { model.setArmed(on, for: vm) } }
+            ))
+            .disabled(vm == nil)
+
+            Divider()
 
             Button("Suspend") {
                 if let vm { Task { await model.suspend(vm) } }

@@ -76,6 +76,66 @@ struct GlassGroup<Content: View>: View {
     }
 }
 
+// MARK: - First-run window size
+
+/// Sizes the window once, the first time the app is ever run.
+///
+/// `defaultSize` on the scene is ignored here — on macOS 26 the window opened
+/// at whatever the system picked (1038x612 on this display) regardless of the
+/// scene's default, the content's ideal size, or `windowResizability`, and with
+/// no saved frame or restoration state to blame. Verified by clearing both and
+/// launching again.
+///
+/// So it is done through AppKit, once, and never again: after the first launch
+/// the window's own saved frame is the right answer and overriding it would
+/// undo the size the user chose.
+struct FirstRunWindowSize: ViewModifier {
+    let width: CGFloat
+    let height: CGFloat
+
+    private static let key = "hasSizedWindowOnce"
+
+    func body(content: Content) -> some View {
+        content.background(WindowReader { window in
+            guard !UserDefaults.standard.bool(forKey: Self.key) else { return }
+            UserDefaults.standard.set(true, forKey: Self.key)
+
+            guard let screen = window.screen ?? NSScreen.main else { return }
+            let visible = screen.visibleFrame
+            let size = NSSize(width: min(width, visible.width - 80),
+                              height: min(height, visible.height - 80))
+            var frame = window.frame
+            frame.origin.y += frame.height - size.height
+            frame.size = window.frameRect(forContentRect:
+                NSRect(origin: .zero, size: size)).size
+            window.setFrame(frame, display: true)
+            window.center()
+        })
+    }
+}
+
+/// Hands back the `NSWindow` a SwiftUI view ended up in.
+private struct WindowReader: NSViewRepresentable {
+    let onWindow: (NSWindow) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        // The window is not attached yet during makeNSView.
+        DispatchQueue.main.async {
+            if let window = view.window { onWindow(window) }
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
+}
+
+extension View {
+    func firstRunWindowSize(width: CGFloat, height: CGFloat) -> some View {
+        modifier(FirstRunWindowSize(width: width, height: height))
+    }
+}
+
 // MARK: - Sequenced explanation
 
 /// One numbered step in a dialog that spells out what an operation will do.

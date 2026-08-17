@@ -52,6 +52,11 @@ struct SidebarView: View {
         }
         Divider()
 
+        Toggle("Save a Point Before Starting", isOn: Binding(
+            get: { model.isArmed(vm) },
+            set: { model.setArmed($0, for: vm) }
+        ))
+
         if !vm.snapshots.isEmpty {
             Button("Clean Up Restore Points…") { model.sheet = .cleanUp(machine: vm.id) }
                 .disabled(model.activity != nil)

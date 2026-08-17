@@ -155,6 +155,13 @@ struct MachineDetailView: View {
                 BlockerBanner(blocker: blocker, vm: vm)
             }
 
+            if model.isArmed(vm) {
+                Label("A restore point is saved automatically before this machine starts.",
+                      systemImage: "shield.lefthalf.filled")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
             // "not in UTM's library" was a dead phrase in the meta line: true,
             // unexplained, and with no way to act on it. It is the only reason
             // Start is unavailable on an otherwise healthy machine.

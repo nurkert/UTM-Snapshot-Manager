@@ -11,7 +11,12 @@ struct RootView: View {
                 SetupView()
             }
         }
-        .frame(minWidth: 900, minHeight: 560)
+        // An ideal size as well as a minimum. With only a minimum, that
+        // minimum *is* the ideal as far as the window is concerned, so the
+        // scene's defaultSize was ignored and the window opened at 900x560 —
+        // the smallest it is allowed to be, every time.
+        .frame(minWidth: 900, idealWidth: 1180, minHeight: 560, idealHeight: 760)
+        .firstRunWindowSize(width: 1180, height: 760)
         .alert(item: $model.alert) { alert in
             Alert(
                 title: Text(alert.title),

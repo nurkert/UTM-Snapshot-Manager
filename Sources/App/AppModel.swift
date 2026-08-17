@@ -283,6 +283,36 @@ final class AppModel: ObservableObject {
         }
     }
 
+    // MARK: - Arming a machine before it runs
+
+    /// Machines that get a restore point taken automatically before they start.
+    ///
+    /// The loop this app is built for is: go back to a known state, run
+    /// something, go back again. The step people forget is the first one — you
+    /// only notice you never saved a point once the thing you ran has already
+    /// changed the disk, and by then the state worth keeping is gone.
+    ///
+    /// Off by default and per machine. It costs a shutdown-free moment before
+    /// every start, and a machine you boot twenty times a day for ordinary work
+    /// does not want it.
+    @Published private(set) var armedMachines: Set<String> = []
+
+    func isArmed(_ vm: VirtualMachine) -> Bool { armedMachines.contains(vm.recordKey) }
+
+    func setArmed(_ armed: Bool, for vm: VirtualMachine) {
+        if armed { armedMachines.insert(vm.recordKey) } else { armedMachines.remove(vm.recordKey) }
+        UserDefaults.standard.set(Array(armedMachines), forKey: armedKey)
+    }
+
+    private func loadArmedMachines() {
+        armedMachines = Set(UserDefaults.standard.stringArray(forKey: armedKey) ?? [])
+    }
+
+    /// The name an automatic pre-start point gets.
+    private func armedPointName(for vm: VirtualMachine) -> String {
+        uniqueName(base: String(localized: "Before starting"), in: vm)
+    }
+
     // MARK: - Notes
 
     /// What a restore point was for, in the user's own words.
@@ -360,6 +390,7 @@ final class AppModel: ObservableObject {
     private let autoBackupKey = "automaticBackups"
     private let autoKeepKey = "automaticBackupsKept"
     private let safetyChoiceKey = "safetyCopyChoices"
+    private let armedKey = "armedMachines"
     private let detailModeKey = "detailMode"
 
     private var hasLoadedOnce = false
@@ -426,6 +457,7 @@ final class AppModel: ObservableObject {
         loadLineages()
         loadNotes()
         loadAutomaticBackups()
+        loadArmedMachines()
         if let raw = UserDefaults.standard.string(forKey: detailModeKey),
            let mode = DetailMode(rawValue: raw) {
             detailMode = mode
@@ -711,11 +743,32 @@ final class AppModel: ObservableObject {
 
     func start(_ vm: VirtualMachine) async {
         guard let uuid = vm.uuid else { return }
-        await run(Activity(title: String(localized: "Starting “\(vm.name)”…"))) {
+
+        // Armed machines get a point before the disk is touched. Deliberately
+        // inside the same operation: a separate "remember to snapshot first"
+        // reminder is a reminder people learn to dismiss.
+        let arming = isArmed(vm) && vm.canModifyDisks && library != nil
+
+        await run(Activity(title: String(localized: arming
+            ? "Saving a point before starting “\(vm.name)”…"
+            : "Starting “\(vm.name)”…"))) {
+            if arming, let library = self.library {
+                let name = self.armedPointName(for: vm)
+                try await library.createSnapshot(named: name, on: vm)
+                await MainActor.run {
+                    self.updateLineage(for: vm.id) { $0.recordSnapshot(named: name) }
+                    self.recordAutomaticBackup(named: name, for: vm.recordKey)
+                }
+                await self.setActivity(Activity(title: String(localized: "Starting “\(vm.name)”…")))
+            }
             try await UTMControl.start(machineWith: uuid, name: vm.name)
         }
         // Success or failure, what is on screen has to match reality afterwards.
         await refreshRunStates()
+        if arming {
+            await refresh()
+            await pruneAutomaticBackups(on: vm.id)
+        }
     }
 
     func stop(_ vm: VirtualMachine, method: UTMControl.StopMethod = .request) async {
