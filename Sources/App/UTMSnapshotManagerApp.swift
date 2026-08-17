@@ -85,6 +85,11 @@ struct AppCommands: Commands {
             .keyboardShortcut("u", modifiers: .command)
             .disabled(!UTMControl.isInstalled)
 
+            Button("Add to UTM…") {
+                if let vm { model.sheet = .addToUTM(machine: vm.id) }
+            }
+            .disabled(vm?.canBeAddedToUTM != true || isBusy)
+
             Button("Show in Finder") {
                 if let vm { model.revealInFinder(vm) }
             }

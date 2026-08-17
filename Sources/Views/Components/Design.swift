@@ -29,7 +29,10 @@ extension View {
     @ViewBuilder
     func noticeSurface(_ tint: Color, cornerRadius: CGFloat = 12) -> some View {
         if #available(macOS 26.0, *) {
-            self.glassEffect(.regular.tint(tint.opacity(0.28)), in: .rect(cornerRadius: cornerRadius))
+            // 0.28 read as a solid colour panel rather than a tinted surface;
+            // a banner has to be noticeable without becoming the loudest thing
+            // in the window.
+            self.glassEffect(.regular.tint(tint.opacity(0.16)), in: .rect(cornerRadius: cornerRadius))
         } else {
             self.background(
                 tint.opacity(0.12),

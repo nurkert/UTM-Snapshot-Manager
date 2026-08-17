@@ -328,6 +328,34 @@ Task {
             ) == .unknown)
 
     // ---------------------------------------------------------------------
+    say("\n[9d] What to offer for a bundle UTM does not manage")
+    // Adding a machine UTM has never seen is safe. Adding one whose identifier
+    // UTM already has elsewhere would leave UTM unable to tell them apart.
+    func membership(path: URL, registryPath: String?) -> VirtualMachine {
+        VirtualMachine(
+            url: path, uuid: sharedUUID, name: "Shared", backend: .qemu, disks: [],
+            snapshots: [], state: .stopped,
+            isRegisteredWithUTM: registryPath.map {
+                URL(fileURLWithPath: $0).standardizedFileURL.path == path.standardizedFileURL.path
+            } ?? false,
+            utmLibraryPath: registryPath,
+            hasAccess: true, hasUnreadableDisk: false, usedBytes: 0, virtualBytes: 0
+        )
+    }
+
+    let unknownToUTM = membership(path: copyPath, registryPath: nil)
+    t.check("a machine UTM has never seen can be added", unknownToUTM.canBeAddedToUTM)
+    t.check("and is not treated as a copy", !unknownToUTM.isCopyOfLibraryMachine)
+
+    let duplicate = membership(path: copyPath, registryPath: originalPath.path)
+    t.check("a bundle whose identifier UTM has elsewhere is a copy",
+            duplicate.isCopyOfLibraryMachine)
+    t.check("and adding it is not offered", !duplicate.canBeAddedToUTM)
+
+    let managed = membership(path: originalPath, registryPath: originalPath.path)
+    t.check("the managed original is neither", !managed.canBeAddedToUTM && !managed.isCopyOfLibraryMachine)
+
+    // ---------------------------------------------------------------------
     say("\n[9c] Exporting a whole machine at one restore point")
     // A bare qcow2 is not a machine. The export has to carry the configuration
     // too, and must not hand the copy the original's identifier.

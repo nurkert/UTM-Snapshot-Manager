@@ -154,6 +154,33 @@ struct MachineDetailView: View {
             if let blocker = vm.blocker {
                 BlockerBanner(blocker: blocker, vm: vm)
             }
+
+            // "not in UTM's library" was a dead phrase in the meta line: true,
+            // unexplained, and with no way to act on it. It is the only reason
+            // Start is unavailable on an otherwise healthy machine.
+            if vm.canBeAddedToUTM {
+                LibraryBanner(
+                    symbol: "questionmark.folder",
+                    tint: .secondary,
+                    title: String(localized: "UTM does not know this machine"),
+                    message: String(localized: "Restore points work anyway — this app reads the disks itself. Starting and shutting down go through UTM, which only accepts machines in its library.")
+                ) {
+                    Button("Add to UTM…") { model.sheet = .addToUTM(machine: vm.id) }
+                        .secondaryActionStyle()
+                        .controlSize(.small)
+                }
+            } else if vm.isCopyOfLibraryMachine {
+                LibraryBanner(
+                    symbol: "doc.on.doc",
+                    tint: .orange,
+                    title: String(localized: "This is a copy of a machine UTM already has"),
+                    message: String(localized: "Both folders carry the same identifier, and UTM addresses machines by it. Adding this one would leave UTM with two machines it cannot tell apart, so it is not offered. Restore points here act on this folder's disks only.")
+                ) {
+                    Button("Show the Original") { model.revealLibraryOriginal(of: vm) }
+                        .secondaryActionStyle()
+                        .controlSize(.small)
+                }
+            }
         }
         .padding(20)
     }
@@ -165,9 +192,8 @@ struct MachineDetailView: View {
         if vm.disks.count > 1 {
             parts.append(String(localized: "\(vm.disks.count) disks"))
         }
-        if !vm.isRegisteredWithUTM {
-            parts.append(String(localized: "not in UTM's library"))
-        }
+        // Deliberately not repeated here: the banner below says it, and says
+        // what it means and what to do about it.
         return parts.joined(separator: " · ")
     }
 
@@ -199,6 +225,39 @@ struct MachineDetailView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - Library membership
+
+/// Same shape as the blocker banner, for the one thing that is not a blocker:
+/// the machine is perfectly fine, UTM just has not been told about it.
+struct LibraryBanner<Actions: View>: View {
+    let symbol: String
+    let tint: Color
+    let title: String
+    let message: String
+    @ViewBuilder var actions: Actions
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: symbol)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(tint)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.callout.weight(.semibold))
+                Text(message)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 8)
+            actions
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .noticeSurface(tint)
     }
 }
 

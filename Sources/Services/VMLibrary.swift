@@ -181,6 +181,7 @@ struct VMLibrary: Sendable {
                 utmAvailability: utmAvailability
             ),
             isRegisteredWithUTM: isRegistered,
+            utmLibraryPath: registryEntry.map { URL(fileURLWithPath: $0.path).standardizedFileURL.path },
             hasAccess: bundle.isReadable,
             hasUnreadableDisk: diskStates.contains { !$0.isReadable },
             usedBytes: diskStates.reduce(0) { $0 + $1.actualBytes },

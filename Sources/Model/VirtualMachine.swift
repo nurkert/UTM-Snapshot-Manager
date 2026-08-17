@@ -37,6 +37,16 @@ struct VirtualMachine: Identifiable, Hashable, Sendable {
     /// real and snapshottable, but cannot be started from here.
     let isRegisteredWithUTM: Bool
 
+    /// Where UTM's library says this machine's identifier lives, if it lists it
+    /// at all. Nil means UTM does not know the identifier, or its library could
+    /// not be read.
+    ///
+    /// The difference matters for what to offer next. A bundle UTM has never
+    /// seen can simply be added. A bundle whose identifier UTM already has at
+    /// *another* path is a copy, and adding it would give UTM two machines with
+    /// one identity — the exact ambiguity this app is built to prevent.
+    var utmLibraryPath: String?
+
     let hasAccess: Bool
 
     /// At least one disk could not be read by `qemu-img`, so sizes and the
@@ -83,6 +93,16 @@ struct VirtualMachine: Identifiable, Hashable, Sendable {
     var canBecomeWritableByShuttingDown: Bool {
         guard case .notStopped(let blocked) = blocker else { return false }
         return (blocked == .running || blocked == .paused) && canStop
+    }
+
+    /// UTM has never seen this identifier, so adding it creates no ambiguity.
+    var canBeAddedToUTM: Bool {
+        !isRegisteredWithUTM && utmLibraryPath == nil && uuid != nil && backend == .qemu
+    }
+
+    /// UTM already has this identifier, at a different folder.
+    var isCopyOfLibraryMachine: Bool {
+        !isRegisteredWithUTM && utmLibraryPath != nil
     }
 
     /// Either writable now, or one clean shutdown away from it.

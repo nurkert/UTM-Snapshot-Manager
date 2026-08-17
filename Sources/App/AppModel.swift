@@ -34,6 +34,7 @@ enum SheetRoute: Identifiable, Equatable {
     case automationHelp
     case welcome
     case note(Snapshot, machine: VirtualMachine.ID)
+    case addToUTM(machine: VirtualMachine.ID)
 
     var id: String {
         switch self {
@@ -44,6 +45,7 @@ enum SheetRoute: Identifiable, Equatable {
         case .automationHelp: return "automation"
         case .welcome: return "welcome"
         case .note(let s, let m): return "note-\(m)-\(s.id)"
+        case .addToUTM(let m): return "add-\(m)"
         }
     }
 }
@@ -878,7 +880,66 @@ final class AppModel: ObservableObject {
         }
     }
 
+    // MARK: - UTM's library
+
+    /// Hands a bundle to UTM so it appears in its library.
+    ///
+    /// Until UTM knows a machine, this app cannot start or stop it: every
+    /// command goes through UTM's scripting interface and is addressed by the
+    /// identifier UTM has on file. Snapshots never needed UTM, which is why a
+    /// bundle in Downloads is fully usable here and still cannot be started —
+    /// a split that reads as an arbitrary restriction until you know it.
+    ///
+    /// Deliberately an explicit action rather than something Start does behind
+    /// the scenes. It changes UTM's library, not just this window, and the user
+    /// should be the one deciding that.
+    func addToUTM(_ machineID: VirtualMachine.ID) async {
+        guard let vm = machine(machineID), vm.canBeAddedToUTM, let uuid = vm.uuid else { return }
+
+        UTMControl.reveal(bundleAt: vm.url)
+
+        await run(Activity(
+            title: String(localized: "Adding “\(vm.name)” to UTM…"),
+            detail: String(localized: "UTM is opening the machine. Confirm there if it asks.")
+        )) {
+            try await self.waitUntilRegistered(uuid: uuid, at: vm.url)
+        }
+        await refresh()
+
+        if machine(machineID)?.isRegisteredWithUTM == true {
+            lastOutcome = String(localized: "“\(vm.name)” is in UTM's library — it can be started from here now.")
+        }
+    }
+
+    /// Polls UTM's library until it lists this identifier at this folder.
+    ///
+    /// Matched on the path, not merely on the identifier turning up: UTM may
+    /// import a copy elsewhere, and treating that as success would leave the
+    /// user with a Start button that drives a different machine.
+    private func waitUntilRegistered(
+        uuid: String, at url: URL, timeout: TimeInterval = 45
+    ) async throws {
+        let wanted = url.standardizedFileURL.path
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if let entry = UTMRegistry.entries()?[uuid],
+               URL(fileURLWithPath: entry.path).standardizedFileURL.path == wanted {
+                return
+            }
+            try? await Task.sleep(for: .seconds(1))
+        }
+        throw AppError.timedOut(
+            what: String(localized: "Waiting for UTM to add the machine"), seconds: Int(timeout)
+        )
+    }
+
     // MARK: - Navigation helpers
+
+    /// Opens Finder on the folder UTM has on file for this identifier.
+    func revealLibraryOriginal(of vm: VirtualMachine) {
+        guard let path = vm.utmLibraryPath else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+    }
 
     func revealInFinder(_ vm: VirtualMachine) {
         NSWorkspace.shared.activateFileViewerSelecting([vm.url])

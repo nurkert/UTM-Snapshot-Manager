@@ -50,6 +50,8 @@ struct RootView: View {
             WelcomeView().onDisappear { model.markWelcomeSeen() }
         case .note(let snapshot, let machineID):
             NoteSheet(snapshot: snapshot, machineID: machineID)
+        case .addToUTM(let machineID):
+            AddToUTMSheet(machineID: machineID)
         }
     }
 }

@@ -54,6 +54,9 @@ struct SidebarView: View {
         Button("Show in Finder") { model.revealInFinder(vm) }
         if UTMControl.isInstalled {
             Button("Open in UTM") { model.openInUTM(vm) }
+            if vm.canBeAddedToUTM {
+                Button("Add to UTM…") { model.sheet = .addToUTM(machine: vm.id) }
+            }
         }
     }
 
