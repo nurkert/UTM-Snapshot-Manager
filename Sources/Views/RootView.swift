@@ -54,6 +54,10 @@ struct RootView: View {
             AddToUTMSheet(machineID: machineID)
         case .trash(let machineID):
             TrashMachineSheet(machineID: machineID)
+        case .rename(let machineID):
+            RenameMachineSheet(machineID: machineID)
+        case .newMachine(let snapshot, let machineID):
+            NewMachineSheet(snapshot: snapshot, machineID: machineID)
         }
     }
 }

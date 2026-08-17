@@ -51,6 +51,10 @@ struct SidebarView: View {
             Button("Shut Down") { Task { await model.stop(vm, method: .request) } }
         }
         Divider()
+
+        Button("Rename…") { model.sheet = .rename(machine: vm.id) }
+            .disabled(model.activity != nil)
+
         Button("Show in Finder") { model.revealInFinder(vm) }
         if UTMControl.isInstalled {
             Button("Open in UTM") { model.openInUTM(vm) }

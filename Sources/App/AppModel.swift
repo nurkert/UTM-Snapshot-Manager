@@ -36,6 +36,8 @@ enum SheetRoute: Identifiable, Equatable {
     case note(Snapshot, machine: VirtualMachine.ID)
     case addToUTM(machine: VirtualMachine.ID)
     case trash(machine: VirtualMachine.ID)
+    case rename(machine: VirtualMachine.ID)
+    case newMachine(Snapshot, machine: VirtualMachine.ID)
 
     var id: String {
         switch self {
@@ -48,6 +50,8 @@ enum SheetRoute: Identifiable, Equatable {
         case .note(let s, let m): return "note-\(m)-\(s.id)"
         case .addToUTM(let m): return "add-\(m)"
         case .trash(let m): return "trash-\(m)"
+        case .rename(let m): return "rename-\(m)"
+        case .newMachine(let s, let m): return "fork-\(m)-\(s.id)"
         }
     }
 }
@@ -383,6 +387,16 @@ final class AppModel: ObservableObject {
     /// a scan, and the machines then appear out of nowhere, seemingly at random.
     func applicationBecameActive() async {
         guard !isScanning, activity == nil else { return }
+
+        // First thing on coming back: ask UTM what is running.
+        //
+        // The usual reason to leave this window is to do something to a machine
+        // in UTM — most often shut it down so a restore point can be taken. The
+        // poll would catch it, but only after its next tick, so the window
+        // greeted you with a banner still insisting you shut the machine down
+        // that you just shut down. One Apple Event is a cheap price for the
+        // state being right the moment you look at it.
+        await refreshRunStates()
 
         // A sheet holds a machine and a restore point the user picked. Swapping
         // the list underneath it can move the selection, and the confirmed
@@ -749,6 +763,68 @@ final class AppModel: ObservableObject {
         await refresh()
     }
 
+    /// Saves a restore point without shutting the guest down.
+    ///
+    /// QEMU can snapshot a live machine — `savevm` on its monitor does exactly
+    /// what VMware and VirtualBox do. UTM exposes that monitor only over its own
+    /// SPICE port, which no other process can reach, and its scripting interface
+    /// has no snapshot command. So the live path is closed to us, not by the
+    /// format and not by QEMU, but by where the door is.
+    ///
+    /// What *is* reachable is the same idea one step apart: ask UTM to park the
+    /// machine — memory written to the image, QEMU exits — take the point on the
+    /// now-quiet disk, then resume. The guest never shuts down and comes back
+    /// exactly where it was; it is paused for as long as writing its memory
+    /// takes.
+    ///
+    /// The point captures a disk that was parked cleanly rather than caught
+    /// mid-write, which is the property that matters. It does not carry the
+    /// memory itself, so restoring it later boots rather than resumes.
+    func createSnapshotWhileParked(named name: String, on machineID: VirtualMachine.ID) async {
+        guard let vm = machine(machineID), let library,
+              let uuid = vm.uuid, vm.isRegisteredWithUTM else { return }
+
+        var parked = false
+
+        await run(Activity(
+            title: String(localized: "Pausing “\(vm.name)”…"),
+            detail: String(localized: "UTM is writing the machine's memory to disk. The guest is not shut down.")
+        )) {
+            try await UTMControl.suspend(machineWith: uuid, name: vm.name)
+            try await self.waitForStop(uuid: uuid)
+            parked = true
+
+            await self.setActivity(Activity(
+                title: String(localized: "Saving “\(name)”…"),
+                detail: String(localized: "The disk is quiet now, so the point is written from a clean state.")
+            ))
+            try await library.createSnapshot(
+                named: name, on: vm, allowingParkedMemoryState: true
+            )
+
+            await MainActor.run {
+                self.updateLineage(for: vm.id) { $0.recordSnapshot(named: name) }
+            }
+
+            await self.setActivity(Activity(
+                title: String(localized: "Resuming “\(vm.name)”…"),
+                detail: String(localized: "The machine picks up where it left off.")
+            ))
+            try await UTMControl.start(machineWith: uuid, name: vm.name)
+
+            await MainActor.run {
+                self.lastOutcome = String(localized: "Saved “\(name)” and resumed “\(vm.name)”.")
+            }
+        }
+
+        // A failure after parking must not leave the machine sitting suspended
+        // with no explanation — it looks like the app switched it off.
+        if parked, machine(machineID)?.state != .running {
+            try? await UTMControl.start(machineWith: uuid, name: vm.name)
+        }
+        await refresh()
+    }
+
     func delete(_ snapshot: Snapshot, on machineID: VirtualMachine.ID) async {
         guard let vm = machine(machineID), let library else { return }
         await run(Activity(title: String(localized: "Deleting “\(snapshot.name)”…"))) {
@@ -933,6 +1009,86 @@ final class AppModel: ObservableObject {
         throw AppError.timedOut(
             what: String(localized: "Waiting for UTM to add the machine"), seconds: Int(timeout)
         )
+    }
+
+    /// Turns a restore point into a machine of its own, beside the original.
+    ///
+    /// The export writes the same thing to a place you pick, for carrying
+    /// elsewhere. This is the other half of that idea: keep the branch you are
+    /// on *and* the one you were about to try, as two machines you can run side
+    /// by side. Which is the thing a restore point cannot give you — rolling
+    /// back is a move, not a copy.
+    ///
+    /// Lands in the original's folder and, when asked, goes straight into UTM's
+    /// library so it can be started immediately.
+    func createMachine(
+        from snapshot: Snapshot,
+        on machineID: VirtualMachine.ID,
+        named newName: String,
+        addingToUTM: Bool
+    ) async {
+        guard let vm = machine(machineID), let library else { return }
+
+        let destination = vm.url.deletingLastPathComponent()
+            .appendingPathComponent(VMLibrary.folderName(for: newName))
+
+        guard !FileManager.default.fileExists(atPath: destination.path) else {
+            alert = AppAlert(
+                title: String(localized: "“\(destination.lastPathComponent)” already exists"),
+                message: String(localized: "There is already a folder with that name beside “\(vm.name)”. Pick a different name.")
+            )
+            return
+        }
+
+        await run(Activity(
+            title: String(localized: "Creating “\(newName)”…"),
+            detail: String(localized: "Every disk is rewritten at “\(snapshot.name)”. Expect this to take a while on a large machine.")
+        )) {
+            try await library.exportBundle(
+                snapshot, on: vm, to: destination, compressDisks: false
+            ) { message in
+                await self.setActivity(Activity(title: String(localized: "Creating “\(newName)”…"), detail: message))
+            }
+            try VMLibrary.setName(newName, in: destination)
+        }
+
+        await refresh()
+
+        guard machines.contains(where: { $0.id == destination.standardizedFileURL.path }) else { return }
+        selectedMachineID = destination.standardizedFileURL.path
+        lastOutcome = String(localized: "“\(newName)” is ready, frozen at “\(snapshot.name)”.")
+
+        if addingToUTM {
+            await addToUTM(destination.standardizedFileURL.path)
+        }
+    }
+
+    /// Renames a machine, its folder, or both.
+    ///
+    /// Everything this app remembers is filed under the identifier inside the
+    /// bundle, so a rename never orphans a baseline, a branch record or a note
+    /// — they follow the machine wherever it goes and whatever it is called.
+    func rename(
+        _ machineID: VirtualMachine.ID,
+        to newName: String,
+        renamingFolder: Bool
+    ) async {
+        guard let vm = machine(machineID), let library else { return }
+
+        var moved: URL?
+        await run(Activity(title: String(localized: "Renaming “\(vm.name)”…"))) {
+            moved = try await library.rename(vm, to: newName, renamingFolder: renamingFolder)
+        }
+        await refresh()
+
+        // Follow the machine to its new folder, so the rename does not look
+        // like the machine vanished from the list.
+        if let moved, moved.standardizedFileURL != vm.url.standardizedFileURL {
+            selectedMachineID = moved.standardizedFileURL.path
+        }
+        if machines.contains(where: { $0.id == (moved?.path ?? vm.id) }) {
+            lastOutcome = String(localized: "Renamed to “\(newName)”.")
+        }
     }
 
     /// Moves a machine's whole folder to the Trash.

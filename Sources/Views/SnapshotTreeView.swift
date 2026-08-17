@@ -18,7 +18,13 @@ struct SnapshotTreeView: View {
 
     var body: some View {
         let roots = lineage.tree(from: vm.snapshots)
-        let showsCurrentMarker = lineage.current == nil && !vm.snapshots.isEmpty
+        // The marker appears whenever the machine's present contents are not a
+        // recorded point — either nothing is recorded, or it has run since.
+        let atPoint = lineage.current.flatMap { name in
+            vm.snapshots.first { $0.name == name }
+        }
+        let hasMovedOn = atPoint.map { vm.hasMovedOn(from: $0) } ?? true
+        let showsCurrentMarker = hasMovedOn && !vm.snapshots.isEmpty
 
         ScrollView {
             // One container for all the cards: neighbouring glass surfaces
@@ -26,11 +32,18 @@ struct SnapshotTreeView: View {
             GlassGroup(spacing: 18) {
                 VStack(alignment: .leading, spacing: TreeMetrics.rowGap) {
                     ForEach(roots) { node in
-                        TreeBranch(node: node, vm: vm, current: lineage.current)
+                        // A point stops being "here" once the machine has been
+                        // written to since; it becomes where the machine last
+                        // came from.
+                        TreeBranch(
+                            node: node, vm: vm,
+                            current: hasMovedOn ? nil : lineage.current,
+                            lastVisited: hasMovedOn ? lineage.current : nil
+                        )
                     }
 
                     if showsCurrentMarker {
-                        unmarkedStateNote
+                        currentStateNote(movedOnFrom: atPoint)
                     }
                     if lineage.parents.isEmpty && vm.snapshots.count > 1 {
                         flatHistoryNote
@@ -92,7 +105,7 @@ struct SnapshotTreeView: View {
     /// that slid out from under the tree. It is deliberately not a card: there
     /// is nothing here to restore to, and giving it a surface would invite the
     /// click that a bordered box promises.
-    private var unmarkedStateNote: some View {
+    private func currentStateNote(movedOnFrom point: Snapshot?) -> some View {
         HStack(spacing: 14) {
             ZStack {
                 Circle()
@@ -112,12 +125,15 @@ struct SnapshotTreeView: View {
                 // its own: a card's text starts right after the marker, and an
                 // extra icon column here would push this line out of step with
                 // every card above it.
-                Label("Current state", systemImage: "clock.badge.questionmark")
+                Label(noteTitle, systemImage: noteSymbol)
                     .font(.body.weight(.medium))
                     .symbolRenderingMode(.hierarchical)
-                Text("Not saved to any restore point yet.")
+                    .foregroundStyle(vm.state == .running || vm.state == .paused
+                                     ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
+                Text(noteDetail(movedOnFrom: point))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Spacer(minLength: 12)
@@ -128,6 +144,42 @@ struct SnapshotTreeView: View {
         .padding(.vertical, 8)
         .frame(maxWidth: TreeMetrics.cardMaxWidth, alignment: .leading)
         .padding(.top, 2)
+    }
+
+    private var noteTitle: String {
+        switch vm.state {
+        case .running, .paused: return String(localized: "Running now")
+        case .suspended: return String(localized: "Parked, not saved")
+        default: return String(localized: "Current state")
+        }
+    }
+
+    private var noteSymbol: String {
+        switch vm.state {
+        case .running, .paused: return "record.circle"
+        case .suspended: return "moon.circle"
+        default: return "clock.badge.questionmark"
+        }
+    }
+
+    /// Says what the present state is *relative to* the last point, because
+    /// "not saved yet" is not the same sentence when there is a point right
+    /// above it that the machine has simply moved on from.
+    private func noteDetail(movedOnFrom point: Snapshot?) -> String {
+        if let point {
+            switch vm.state {
+            case .running, .paused:
+                return String(localized: "The machine is writing to its disk. Everything since “\(point.name)” is unsaved.")
+            default:
+                return String(localized: "Changed since “\(point.name)”. Save a point to be able to come back here.")
+            }
+        }
+        switch vm.state {
+        case .running, .paused:
+            return String(localized: "The machine is writing to its disk, and none of it is saved to a restore point.")
+        default:
+            return String(localized: "Not saved to any restore point yet.")
+        }
     }
 
     private var flatHistoryNote: some View {
@@ -241,6 +293,7 @@ private struct TreeBranch: View {
     let node: LineageNode
     let vm: VirtualMachine
     let current: String?
+    var lastVisited: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: TreeMetrics.rowGap) {
@@ -248,11 +301,12 @@ private struct TreeBranch: View {
                 snapshot: node.snapshot,
                 vm: vm,
                 isCurrent: current == node.snapshot.name,
+                isLastVisited: lastVisited == node.snapshot.name,
                 hasChildren: !node.children.isEmpty
             )
 
             ForEach(node.children) { child in
-                TreeBranch(node: child, vm: vm, current: current)
+                TreeBranch(node: child, vm: vm, current: current, lastVisited: lastVisited)
                     .padding(.leading, TreeMetrics.indent)
             }
         }
@@ -267,6 +321,9 @@ private struct TreeNodeCard: View {
     let snapshot: Snapshot
     let vm: VirtualMachine
     let isCurrent: Bool
+    /// The machine was last restored to or saved at this point, but has been
+    /// written to since — so it is where it came from, not where it is.
+    var isLastVisited = false
     let hasChildren: Bool
 
     @State private var isHovering = false
@@ -385,6 +442,10 @@ private struct TreeNodeCard: View {
                 TagLabel(text: String(localized: "You are here"),
                          symbol: "location.fill", tint: .accentColor)
             } else {
+                if isLastVisited {
+                    TagLabel(text: String(localized: "Came from here"),
+                             symbol: "location", tint: .secondary)
+                }
                 // Click restores; the arrow adds "and start again", which is the
                 // loop this view exists for.
                 Menu {
@@ -413,6 +474,11 @@ private struct TreeNodeCard: View {
                 Button(model.note(for: snapshot, in: vm) == nil ? "Add Note…" : "Edit Note…") {
                     model.sheet = .note(snapshot, machine: vm.id)
                 }
+                Button("New Machine from This Point…") {
+                    model.sheet = .newMachine(snapshot, machine: vm.id)
+                }
+                .disabled(!snapshot.isComplete)
+
                 Menu("Export") {
                     Button("As a Machine…") { Task { await model.exportMachine(snapshot, on: vm.id, asArchive: false) } }
                     Button("As a Compressed Archive…") { Task { await model.exportMachine(snapshot, on: vm.id, asArchive: true) } }

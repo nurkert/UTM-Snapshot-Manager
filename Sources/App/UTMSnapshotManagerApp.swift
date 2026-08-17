@@ -85,6 +85,11 @@ struct AppCommands: Commands {
             .keyboardShortcut("u", modifiers: .command)
             .disabled(!UTMControl.isInstalled)
 
+            Button("Rename…") {
+                if let vm { model.sheet = .rename(machine: vm.id) }
+            }
+            .disabled(vm == nil || isBusy)
+
             Button("Add to UTM…") {
                 if let vm { model.sheet = .addToUTM(machine: vm.id) }
             }
@@ -132,6 +137,14 @@ struct AppCommands: Commands {
             }
             .keyboardShortcut("n", modifiers: [.command, .option])
             .disabled(snapshot == nil || vm == nil)
+
+            Button("New Machine from This Point…") {
+                if let snapshot, let vm { model.sheet = .newMachine(snapshot, machine: vm.id) }
+            }
+            .keyboardShortcut("d", modifiers: [.command, .shift])
+            .disabled(snapshot == nil || isBusy)
+
+            Divider()
 
             Button("Export as Machine…") {
                 if let snapshot, let vm { Task { await model.exportMachine(snapshot, on: vm.id, asArchive: false) } }

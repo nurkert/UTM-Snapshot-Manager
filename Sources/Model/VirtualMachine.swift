@@ -56,6 +56,15 @@ struct VirtualMachine: Identifiable, Hashable, Sendable {
     let usedBytes: Int64
     let virtualBytes: Int64
 
+    /// When any of this machine's disks was last written to.
+    ///
+    /// The one cheap signal for "has this machine run since that restore point
+    /// was taken". Booting a guest writes to its disk within seconds, so a
+    /// modification time newer than a point's date means the machine has moved
+    /// on from it — which is what turns "you are here" from a fact into a
+    /// leftover label.
+    var lastDiskChange: Date?
+
     var id: String { url.path }
 
     /// The key everything this app remembers about a machine is filed under —
@@ -103,6 +112,18 @@ struct VirtualMachine: Identifiable, Hashable, Sendable {
     /// UTM already has this identifier, at a different folder.
     var isCopyOfLibraryMachine: Bool {
         !isRegisteredWithUTM && utmLibraryPath != nil
+    }
+
+    /// True when the machine has been written to since this point was taken, so
+    /// its present contents are no longer that point.
+    ///
+    /// A running machine always counts: it is writing to the disk right now,
+    /// whatever the timestamps say. The comparison is given a minute of slack
+    /// because taking a point touches the image itself.
+    func hasMovedOn(from snapshot: Snapshot) -> Bool {
+        if state == .running || state == .paused { return true }
+        guard let lastDiskChange else { return false }
+        return lastDiskChange.timeIntervalSince(snapshot.date) > 60
     }
 
     /// Either writable now, or one clean shutdown away from it.

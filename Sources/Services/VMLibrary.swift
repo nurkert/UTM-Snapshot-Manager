@@ -185,8 +185,16 @@ struct VMLibrary: Sendable {
             hasAccess: bundle.isReadable,
             hasUnreadableDisk: diskStates.contains { !$0.isReadable },
             usedBytes: diskStates.reduce(0) { $0 + $1.actualBytes },
-            virtualBytes: diskStates.reduce(0) { $0 + $1.virtualBytes }
+            virtualBytes: diskStates.reduce(0) { $0 + $1.virtualBytes },
+            lastDiskChange: Self.lastWrite(to: bundle.disks)
         )
+    }
+
+    /// The most recent write across a machine's disks.
+    static func lastWrite(to disks: [DiskImage]) -> Date? {
+        disks.compactMap {
+            try? $0.url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        }.max()
     }
 
     /// UTM's reserved snapshot. It holds a suspended machine's memory image, is
@@ -347,7 +355,18 @@ struct VMLibrary: Sendable {
         return values?.volumeName ?? String(localized: "The disk")
     }
 
-    func verifyWritable(_ vm: VirtualMachine) async throws {
+    /// - Parameter allowingParkedMemoryState: accepts a machine UTM has parked
+    ///   with `suspend saving`. Only ever set for *creating* a restore point.
+    ///
+    ///   Suspension blocks a write because rolling a disk back underneath a
+    ///   parked memory state leaves UTM resuming stale RAM onto changed data.
+    ///   Creating a point does not roll anything back: it adds an entry to an
+    ///   image no process holds and leaves the current contents exactly as they
+    ///   are, memory state included. Restoring stays blocked either way.
+    func verifyWritable(
+        _ vm: VirtualMachine,
+        allowingParkedMemoryState: Bool = false
+    ) async throws {
         guard vm.hasAccess else {
             throw AppError.toolFailed(reason: String(localized: "This machine's folder cannot be read."))
         }
@@ -363,7 +382,8 @@ struct VMLibrary: Sendable {
                     reason: String(localized: "\(disk.fileName) could not be read, so the machine's state is unknown. Nothing was changed.")
                 )
             }
-            if (info.snapshots ?? []).contains(where: { $0.name == Self.suspendTag }) {
+            if !allowingParkedMemoryState,
+               (info.snapshots ?? []).contains(where: { $0.name == Self.suspendTag }) {
                 throw AppError.notStopped(vm: vm.name, state: .suspended)
             }
         }
@@ -432,8 +452,12 @@ struct VMLibrary: Sendable {
     /// If a later disk fails, the snapshots already written to the earlier ones
     /// are removed again, so a half-created restore point never survives to be
     /// offered — and then partially applied — later on.
-    func createSnapshot(named name: String, on vm: VirtualMachine) async throws {
-        try await verifyWritable(vm)
+    func createSnapshot(
+        named name: String,
+        on vm: VirtualMachine,
+        allowingParkedMemoryState: Bool = false
+    ) async throws {
+        try await verifyWritable(vm, allowingParkedMemoryState: allowingParkedMemoryState)
         try Self.ensureRoomToWrite(vm)
 
         var written: [DiskImage] = []
@@ -559,6 +583,90 @@ struct VMLibrary: Sendable {
         try await QemuImg.exportSnapshot(
             qemuImg: qemuImgPath, disk: disk, snapshot: snapshot.name, to: url
         )
+    }
+
+    // MARK: - Renaming
+
+    /// Renames a machine: the name it shows under, the folder it lives in, or
+    /// both.
+    ///
+    /// Two separate things that usually want to move together and sometimes
+    /// must not. `Information.Name` in `config.plist` is what UTM and this app
+    /// display. The folder name is what Finder shows and what UTM's library
+    /// points at — so renaming the folder of a machine UTM manages leaves that
+    /// entry aimed at a path which no longer exists. The caller decides; this
+    /// only refuses what cannot work.
+    ///
+    /// Gated on the same check as a write, because moving a folder whose disks a
+    /// process still holds is worse than any rename is worth.
+    ///
+    /// Returns where the machine ended up.
+    @discardableResult
+    func rename(
+        _ vm: VirtualMachine,
+        to newName: String,
+        renamingFolder: Bool
+    ) async throws -> URL {
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw AppError.toolFailed(reason: String(localized: "A machine needs a name."))
+        }
+
+        try await verifyWritable(vm)
+
+        try Self.setDisplayName(trimmed, in: vm.url)
+        guard renamingFolder else { return vm.url }
+
+        let target = vm.url.deletingLastPathComponent()
+            .appendingPathComponent(Self.folderName(for: trimmed))
+        guard target.standardizedFileURL != vm.url.standardizedFileURL else { return vm.url }
+        guard !FileManager.default.fileExists(atPath: target.path) else {
+            throw AppError.toolFailed(reason: String(localized:
+                "“\(target.lastPathComponent)” already exists in that folder."))
+        }
+
+        try FileManager.default.moveItem(at: vm.url, to: target)
+        return target
+    }
+
+    /// A file name from a machine name.
+    ///
+    /// Only the characters that cannot survive in a path are replaced. Being
+    /// stricter would quietly mangle names people chose on purpose.
+    static func folderName(for name: String) -> String {
+        var cleaned = name
+            .replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ":", with: "-")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        // A leading dot hides the machine from Finder and from this app's scan.
+        while cleaned.hasPrefix(".") { cleaned.removeFirst() }
+        if cleaned.isEmpty { cleaned = "Virtual Machine" }
+        return cleaned + ".utm"
+    }
+
+    /// Sets a bundle's display name. Public because a freshly written export
+    /// is named after the point it came from, and a machine created from one
+    /// should carry the name the user chose instead.
+    static func setName(_ name: String, in bundle: URL) throws {
+        try setDisplayName(name, in: bundle)
+    }
+
+    private static func setDisplayName(_ name: String, in bundle: URL) throws {
+        let configURL = bundle.appendingPathComponent("config.plist")
+        let data = try Data(contentsOf: configURL)
+        var format = PropertyListSerialization.PropertyListFormat.xml
+        guard var plist = try PropertyListSerialization.propertyList(
+            from: data, options: [.mutableContainersAndLeaves], format: &format
+        ) as? [String: Any] else {
+            throw AppError.toolFailed(reason: String(localized: "This machine's configuration could not be read."))
+        }
+        var information = plist["Information"] as? [String: Any] ?? [:]
+        information["Name"] = name
+        plist["Information"] = information
+        let written = try PropertyListSerialization.data(
+            fromPropertyList: plist, format: format, options: 0
+        )
+        try written.write(to: configURL, options: .atomic)
     }
 
     // MARK: - Exporting a whole machine

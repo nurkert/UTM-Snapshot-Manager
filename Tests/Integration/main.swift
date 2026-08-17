@@ -424,6 +424,49 @@ Task {
             !FileManager.default.fileExists(atPath: root.appendingPathComponent("Half.utm").path))
 
     // ---------------------------------------------------------------------
+    say("\n[9e] Renaming a machine")
+    let renamable = try! makeBundle(name: "Before", diskCount: 1)
+    let renameVM = machine(from: renamable)
+    try! await QemuImg.createSnapshot(qemuImg: qemuImg, disk: renameVM.disks[0], name: "kept")
+
+    // Name only: the folder is untouched, so UTM's library entry still resolves.
+    try! await lib.rename(renameVM, to: "After", renamingFolder: false)
+    t.check("the display name changed", machine(from: renamable).name == "After")
+    t.check("the folder did not", FileManager.default.fileExists(atPath: renamable.path))
+
+    // Name and folder.
+    let movedTo = try! await lib.rename(machine(from: renamable), to: "Renamed", renamingFolder: true)
+    t.check("the folder moved", movedTo.lastPathComponent == "Renamed.utm")
+    t.check("the old folder is gone", !FileManager.default.fileExists(atPath: renamable.path))
+    t.check("both names agree", machine(from: movedTo).name == "Renamed")
+
+    // Restore points live in the disks, so they travel with the folder.
+    t.check("the restore point came along",
+            await names(on: machine(from: movedTo).disks[0]).contains("kept"))
+
+    // The identifier is what this app files its records under, so it must not
+    // change — otherwise a rename would orphan the baseline and the tree.
+    t.check("the identifier is unchanged",
+            machine(from: movedTo).uuid == renameVM.uuid)
+
+    // A collision must not clobber whatever is already there.
+    let occupied = try! makeBundle(name: "Taken", diskCount: 1)
+    var collided = false
+    do { _ = try await lib.rename(machine(from: movedTo), to: "Taken", renamingFolder: true) }
+    catch { collided = true }
+    t.check("renaming onto an existing folder is refused", collided)
+    t.check("and the existing folder is intact",
+            FileManager.default.fileExists(atPath: occupied.appendingPathComponent("config.plist").path))
+
+    // Characters that cannot survive in a path are replaced; the rest are kept.
+    t.check("a slash cannot escape the folder name",
+            !VMLibrary.folderName(for: "a/b").contains("/"))
+    t.check("a leading dot cannot hide the machine",
+            !VMLibrary.folderName(for: "...hidden").hasPrefix("."))
+    t.check("ordinary punctuation is left alone",
+            VMLibrary.folderName(for: "Debian 12 — clean") == "Debian 12 — clean.utm")
+
+    // ---------------------------------------------------------------------
     say("\n[10] A disk added since the last scan stops the write")
     // The model carries the disk list from the last scan. Adding a disk in UTM
     // and then restoring must not roll back the known disks and quietly leave

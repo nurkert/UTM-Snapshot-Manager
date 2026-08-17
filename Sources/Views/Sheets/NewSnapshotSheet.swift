@@ -10,6 +10,7 @@ struct NewSnapshotSheet: View {
     @State private var name = ""
     @State private var makeBaseline = false
     @State private var note = ""
+    @State private var keepRunning = true
     @FocusState private var isFieldFocused: Bool
 
     private var vm: VirtualMachine? { model.machines.first { $0.id == machineID } }
@@ -24,9 +25,7 @@ struct NewSnapshotSheet: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Take Snapshot")
                         .font(.title3.weight(.semibold))
-                    Text(needsShutdown
-                         ? String(localized: "“\(vm?.name ?? "")” is still running, so it is shut down first and the state it stops in is saved. \(diskPhrase) You can come back to this point at any time.")
-                         : String(localized: "Freezes “\(vm?.name ?? "")” exactly as it is now. \(diskPhrase) You can come back to this point at any time."))
+                    Text(headline)
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -56,11 +55,37 @@ struct NewSnapshotSheet: View {
             // because a Save button that silently powers a machine off would
             // be a nasty surprise.
             if needsShutdown {
-                StepList {
-                    Step(number: 1, text: String(localized: "Shut “\(vm?.name ?? "")” down — a restore point cannot be written while the machine is using its disk."))
-                    Step(number: 2, text: String(localized: "Save the state it shut down in as “\(displayName)”."))
+                if canPause {
+                    Picker("", selection: $keepRunning) {
+                        Text("Pause and resume").tag(true)
+                        Text("Shut down").tag(false)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .padding(.bottom, 10)
                 }
-                .padding(.bottom, 14)
+
+                StepList {
+                    if keepRunning && canPause {
+                        Step(number: 1, text: String(localized: "UTM parks “\(vm?.name ?? "")” — its memory is written to disk and the guest is not shut down."))
+                        Step(number: 2, text: String(localized: "Save the parked, quiet disk as “\(displayName)”."))
+                        Step(number: 3, text: String(localized: "The machine resumes where it left off."))
+                    } else {
+                        Step(number: 1, text: String(localized: "Shut “\(vm?.name ?? "")” down — a restore point cannot be written while the machine is using its disk."))
+                        Step(number: 2, text: String(localized: "Save the state it shut down in as “\(displayName)”."))
+                    }
+                }
+
+                if keepRunning && canPause {
+                    Label("The guest is paused for as long as writing its memory takes. The point captures a cleanly parked disk, not the memory itself — restoring it later boots rather than resumes.",
+                          systemImage: "info.circle")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 8)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer().frame(height: 14)
             }
 
             Text("Note")
@@ -89,7 +114,7 @@ struct NewSnapshotSheet: View {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
-                Button(needsShutdown ? "Shut Down & Save" : "Save") { submit() }
+                Button(primaryLabel) { submit() }
                     .keyboardShortcut(.defaultAction)
                     .primaryActionStyle()
                     .disabled(validation != nil)
@@ -107,6 +132,29 @@ struct NewSnapshotSheet: View {
     /// so before the user commits, rather than surprising them with a shutdown.
     private var needsShutdown: Bool {
         vm?.canBecomeWritableByShuttingDown == true
+    }
+
+    private var headline: String {
+        guard needsShutdown else {
+            return String(localized: "Freezes “\(vm?.name ?? "")” exactly as it is now. \(diskPhrase) You can come back to this point at any time.")
+        }
+        if keepRunning && canPause {
+            return String(localized: "“\(vm?.name ?? "")” is running. It is paused just long enough to write the point, then carries on. \(diskPhrase)")
+        }
+        return String(localized: "“\(vm?.name ?? "")” is still running, so it is shut down first and the state it stops in is saved. \(diskPhrase)")
+    }
+
+    /// Parking needs UTM: it is UTM that writes the memory out and brings the
+    /// machine back.
+    private var canPause: Bool {
+        vm?.isRegisteredWithUTM == true && vm?.state == .running
+    }
+
+    private var primaryLabel: String {
+        guard needsShutdown else { return String(localized: "Save") }
+        return keepRunning && canPause
+            ? String(localized: "Pause & Save")
+            : String(localized: "Shut Down & Save")
     }
 
     private var displayName: String {
@@ -133,8 +181,13 @@ struct NewSnapshotSheet: View {
         // Dismiss first, then act: mutating model state while the sheet is
         // still on screen is what produced AttributeGraph cycle warnings.
         dismiss()
+        let parking = keepRunning && canPause && needsShutdown
         Task {
-            await model.createSnapshot(named: finalName, on: machineID)
+            if parking {
+                await model.createSnapshotWhileParked(named: finalName, on: machineID)
+            } else {
+                await model.createSnapshot(named: finalName, on: machineID)
+            }
             // Look the saved point up again rather than trusting the name: the
             // create may have failed, and marking a baseline that is not there
             // would leave the machine pointing at nothing.

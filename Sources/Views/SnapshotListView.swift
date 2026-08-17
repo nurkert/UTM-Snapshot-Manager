@@ -59,6 +59,9 @@ struct SnapshotListView: View {
         Button(model.note(for: snapshot, in: vm) == nil ? "Add Note…" : "Edit Note…") {
             model.sheet = .note(snapshot, machine: vm.id)
         }
+        Button("New Machine from This Point…") { model.sheet = .newMachine(snapshot, machine: vm.id) }
+            .disabled(!snapshot.isComplete)
+
         Menu("Export") {
             Button("As a Machine…") { Task { await model.exportMachine(snapshot, on: vm.id, asArchive: false) } }
             Button("As a Compressed Archive…") { Task { await model.exportMachine(snapshot, on: vm.id, asArchive: true) } }
@@ -147,6 +150,11 @@ struct SnapshotRow: View {
                     Button(model.note(for: snapshot, in: vm) == nil ? "Add Note…" : "Edit Note…") {
                         model.sheet = .note(snapshot, machine: vm.id)
                     }
+                    Button("New Machine from This Point…") {
+                        model.sheet = .newMachine(snapshot, machine: vm.id)
+                    }
+                    .disabled(!snapshot.isComplete)
+
                     Menu("Export") {
                         Button("As a Machine…") {
                             Task { await model.exportMachine(snapshot, on: vm.id, asArchive: false) }
