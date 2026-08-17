@@ -113,18 +113,24 @@ enum QemuImg {
     /// Writes one snapshot out as a standalone qcow2 image, leaving the original
     /// untouched. The source is only read, which makes this the safest way to
     /// get a copy of a past state out of a machine.
+    /// Writes one disk, at one restore point, as a standalone qcow2.
+    ///
+    /// `-U` reads past the image lock: this only ever reads, so a running
+    /// machine is no reason to refuse. `-c` compresses inside the qcow2, which
+    /// on a sparse disk beats compressing the finished file afterwards — and it
+    /// stays a normal qcow2 that QEMU opens directly.
     static func exportSnapshot(
         qemuImg: String,
         disk: DiskImage,
         snapshot: String,
-        to destination: URL
+        to destination: URL,
+        compress: Bool = false
     ) async throws {
-        let result = await ProcessRunner.run(
-            qemuImg,
-            ["convert", "-U", "-l", "snapshot.name=\(snapshot)", "-O", "qcow2",
-             disk.url.path, destination.path],
-            timeout: mutateTimeout
-        )
+        var arguments = ["convert", "-U", "-l", "snapshot.name=\(snapshot)", "-O", "qcow2"]
+        if compress { arguments.append("-c") }
+        arguments += [disk.url.path, destination.path]
+
+        let result = await ProcessRunner.run(qemuImg, arguments, timeout: mutateTimeout)
         guard result.finished else {
             throw AppError.timedOut(what: String(localized: "The export"), seconds: Int(mutateTimeout))
         }

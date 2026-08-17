@@ -328,6 +328,74 @@ Task {
             ) == .unknown)
 
     // ---------------------------------------------------------------------
+    say("\n[9c] Exporting a whole machine at one restore point")
+    // A bare qcow2 is not a machine. The export has to carry the configuration
+    // too, and must not hand the copy the original's identifier.
+    let exportSource = try! makeBundle(name: "Exportable", diskCount: 2)
+    var exportVM = machine(from: exportSource)
+    for disk in exportVM.disks {
+        try! await QemuImg.createSnapshot(qemuImg: qemuImg, disk: disk, name: "shipped")
+    }
+    exportVM = machine(from: exportSource)
+    let shipped = point("shipped", on: exportVM.disks)
+
+    let exported = root.appendingPathComponent("Shipped.utm")
+    try! await lib.exportBundle(shipped, on: exportVM, to: exported,
+                                    compressDisks: true) { _ in }
+
+    t.check("the export is a bundle, not a bare image",
+            FileManager.default.fileExists(atPath: exported.appendingPathComponent("config.plist").path))
+
+    let exportedPlist = try! PropertyListSerialization.propertyList(
+        from: Data(contentsOf: exported.appendingPathComponent("config.plist")),
+        format: nil) as! [String: Any]
+    let exportedInfo = exportedPlist["Information"] as! [String: Any]
+
+    t.check("the copy has its own identifier",
+            (exportedInfo["UUID"] as? String)?.uppercased() != exportVM.uuid?.uppercased())
+
+    t.check("the copy is named after the point it was taken from",
+            (exportedInfo["Name"] as? String)?.contains("shipped") == true)
+
+    let exportedDisks = machine(from: exported).disks
+    t.check("every disk came along", exportedDisks.count == exportVM.disks.count)
+
+    var allReadable = true
+    for disk in exportedDisks {
+        if await QemuImg.info(qemuImg: qemuImg, disk: disk.url) == nil { allReadable = false }
+    }
+    t.check("every exported disk is a readable qcow2", allReadable)
+
+    // The point is baked into the image, so the copy carries no restore points
+    // of its own — it *is* that state.
+    var carried = Set<String>()
+    for disk in exportedDisks { carried.formUnion(await names(on: disk)) }
+    t.check("the exported disks are flat — the point is the current state",
+            carried.isEmpty)
+
+    var originalStillHas = true
+    for disk in exportVM.disks where !(await names(on: disk)).contains("shipped") {
+        originalStillHas = false
+    }
+    t.check("the original is untouched", originalStillHas)
+
+    // A point missing from one disk would boot with the disks out of step.
+    let lopsided = try! makeBundle(name: "Lopsided", diskCount: 2)
+    let lopsidedVM = machine(from: lopsided)
+    try! await QemuImg.createSnapshot(qemuImg: qemuImg, disk: lopsidedVM.disks[0], name: "half")
+    let halfVM = machine(from: lopsided)
+    let half = point("half", on: [halfVM.disks[0]], missing: [halfVM.disks[1]])
+    var refused = false
+    do {
+        try await lib.exportBundle(half, on: halfVM,
+                                       to: root.appendingPathComponent("Half.utm"),
+                                       compressDisks: false) { _ in }
+    } catch { refused = true }
+    t.check("an incomplete point is refused", refused)
+    t.check("and leaves nothing behind",
+            !FileManager.default.fileExists(atPath: root.appendingPathComponent("Half.utm").path))
+
+    // ---------------------------------------------------------------------
     say("\n[10] A disk added since the last scan stops the write")
     // The model carries the disk list from the last scan. Adding a disk in UTM
     // and then restoring must not roll back the known disks and quietly leave

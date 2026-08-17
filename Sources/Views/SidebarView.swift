@@ -53,7 +53,7 @@ struct SidebarView: View {
         Divider()
         Button("Show in Finder") { model.revealInFinder(vm) }
         if UTMControl.isInstalled {
-            Button("Open in UTM") { model.openUTM() }
+            Button("Open in UTM") { model.openInUTM(vm) }
         }
     }
 

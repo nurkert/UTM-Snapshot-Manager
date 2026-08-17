@@ -559,4 +559,167 @@ struct VMLibrary: Sendable {
             qemuImg: qemuImgPath, disk: disk, snapshot: snapshot.name, to: url
         )
     }
+
+    // MARK: - Exporting a whole machine
+
+    /// Writes a complete, startable `.utm` bundle frozen at one restore point.
+    ///
+    /// A bare `qcow2` is not a machine: without the configuration beside it —
+    /// firmware variables, drive order, hardware — nothing can boot it. This
+    /// copies the bundle, converts every disk down to the chosen point, and
+    /// gives the copy a new identity.
+    ///
+    /// That last step is not cosmetic. UTM keys its library on the identifier in
+    /// `config.plist`; handing another Mac a bundle carrying the original's
+    /// identifier recreates exactly the duplicate this app spends its effort
+    /// telling apart. A new identifier makes the export a machine in its own
+    /// right.
+    ///
+    /// The source is only ever read. Nothing here can damage the original, so it
+    /// does not require the machine to be shut down — but a restore point that
+    /// is not present on every disk is refused, because the result would boot
+    /// with its disks at different points in time.
+    func exportBundle(
+        _ snapshot: Snapshot,
+        on vm: VirtualMachine,
+        to destination: URL,
+        compressDisks: Bool,
+        // Deliberately not @MainActor: the caller decides where the message
+        // lands. Pinning it here deadlocks any caller whose main thread is
+        // already waiting on this call.
+        progress: @Sendable (String) async -> Void
+    ) async throws {
+        guard snapshot.isComplete else {
+            throw AppError.incompleteSnapshot(
+                name: snapshot.name,
+                present: snapshot.diskCount,
+                total: vm.disks.count
+            )
+        }
+
+        let fileManager = FileManager.default
+
+        // Built beside the target and moved into place at the very end, so a run
+        // that fails or is killed halfway cannot leave something that looks like
+        // a finished machine.
+        let staging = destination.deletingLastPathComponent()
+            .appendingPathComponent(".\(destination.lastPathComponent).incomplete")
+        try? fileManager.removeItem(at: staging)
+
+        do {
+            await progress(String(localized: "Copying the machine's configuration…"))
+            let diskPaths = Set(vm.disks.map(\.url.standardizedFileURL.path))
+            try Self.copyTree(from: vm.url, to: staging, skipping: diskPaths)
+
+            for (index, disk) in vm.disks.enumerated() {
+                await progress(vm.disks.count == 1
+                    ? String(localized: "Writing the disk at “\(snapshot.name)”…")
+                    : String(localized: "Writing disk \(index + 1) of \(vm.disks.count) at “\(snapshot.name)”…"))
+
+                let target = try Self.mirroredLocation(of: disk.url, from: vm.url, in: staging)
+                try fileManager.createDirectory(
+                    at: target.deletingLastPathComponent(), withIntermediateDirectories: true
+                )
+                try await QemuImg.exportSnapshot(
+                    qemuImg: qemuImgPath, disk: disk, snapshot: snapshot.name,
+                    to: target, compress: compressDisks
+                )
+            }
+
+            await progress(String(localized: "Giving the copy its own identity…"))
+            try Self.assignNewIdentity(
+                in: staging,
+                name: String(localized: "\(vm.name) — \(snapshot.name)")
+            )
+
+            try? fileManager.removeItem(at: destination)
+            try fileManager.moveItem(at: staging, to: destination)
+        } catch {
+            try? fileManager.removeItem(at: staging)
+            throw error
+        }
+    }
+
+    /// Copies a directory tree, leaving out the files whose paths are listed.
+    ///
+    /// The disks are skipped rather than copied and overwritten: they are the
+    /// large part, and writing seventeen gigabytes only to replace it would turn
+    /// a two-minute export into a long one for no gain.
+    private static func copyTree(from source: URL, to destination: URL, skipping: Set<String>) throws {
+        let fileManager = FileManager.default
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: source.path, isDirectory: &isDirectory) else { return }
+
+        guard isDirectory.boolValue else {
+            guard !skipping.contains(source.standardizedFileURL.path) else { return }
+            try fileManager.copyItem(at: source, to: destination)
+            return
+        }
+
+        try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
+        for name in try fileManager.contentsOfDirectory(atPath: source.path) {
+            try copyTree(
+                from: source.appendingPathComponent(name),
+                to: destination.appendingPathComponent(name),
+                skipping: skipping
+            )
+        }
+    }
+
+    /// Where a disk lands inside the copy: the same place it sits in the
+    /// original, rather than an assumed `Data/` folder.
+    private static func mirroredLocation(of disk: URL, from bundle: URL, in staging: URL) throws -> URL {
+        let bundlePath = bundle.standardizedFileURL.path
+        let diskPath = disk.standardizedFileURL.path
+        guard diskPath.hasPrefix(bundlePath + "/") else {
+            // A drive stored outside the bundle cannot be mirrored into it.
+            throw AppError.toolFailed(reason: String(localized:
+                "“\(disk.lastPathComponent)” is stored outside the machine's folder and cannot be exported with it."))
+        }
+        let relative = String(diskPath.dropFirst(bundlePath.count + 1))
+        return staging.appendingPathComponent(relative)
+    }
+
+    /// Replaces the copy's identifier and name.
+    private static func assignNewIdentity(in bundle: URL, name: String) throws {
+        let configURL = bundle.appendingPathComponent("config.plist")
+        let data = try Data(contentsOf: configURL)
+        var format = PropertyListSerialization.PropertyListFormat.xml
+        guard var plist = try PropertyListSerialization.propertyList(
+            from: data, options: [.mutableContainersAndLeaves], format: &format
+        ) as? [String: Any] else {
+            throw AppError.toolFailed(reason: String(localized: "The copied configuration could not be read."))
+        }
+
+        var information = plist["Information"] as? [String: Any] ?? [:]
+        information["UUID"] = UUID().uuidString.uppercased()
+        information["Name"] = name
+        plist["Information"] = information
+
+        let written = try PropertyListSerialization.data(
+            fromPropertyList: plist, format: format, options: 0
+        )
+        try written.write(to: configURL, options: .atomic)
+    }
+
+    /// Packs a finished bundle into a zip and removes the folder.
+    ///
+    /// `ditto` rather than `zip`: it preserves the resource forks and extended
+    /// attributes a `.utm` carries, and `--keepParent` keeps the `.utm` folder
+    /// itself inside the archive, so unpacking on the other Mac yields a machine
+    /// rather than a heap of loose files.
+    static func compress(bundle: URL, to archive: URL) async throws {
+        let result = await ProcessRunner.run(
+            "/usr/bin/ditto",
+            ["-c", "-k", "--sequesterRsrc", "--keepParent", bundle.path, archive.path],
+            timeout: 3600
+        )
+        guard result.finished else {
+            throw AppError.timedOut(what: String(localized: "Packing the archive"), seconds: 3600)
+        }
+        guard result.ok else {
+            throw AppError.toolFailed(reason: result.message)
+        }
+        try? FileManager.default.removeItem(at: bundle)
+    }
 }

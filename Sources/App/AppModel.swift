@@ -813,15 +813,87 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Exports the whole machine, frozen at one restore point, as something the
+    /// other side can actually start.
+    ///
+    /// The bare disk export above answers "give me this image". This answers the
+    /// question people actually ask — "give me this machine, as it was, so I can
+    /// run it somewhere else" — and those are not the same file.
+    func exportMachine(
+        _ snapshot: Snapshot,
+        on machineID: VirtualMachine.ID,
+        asArchive: Bool
+    ) async {
+        guard let vm = machine(machineID), let library else { return }
+
+        guard snapshot.isComplete else {
+            alert = AppAlert(
+                title: String(localized: "“\(snapshot.name)” is not on every disk"),
+                message: String(localized: "Exporting it would produce a machine whose disks sit at different points in time, which would not boot cleanly. Nothing was written.")
+            )
+            return
+        }
+
+        let panel = NSSavePanel()
+        panel.title = String(localized: "Export Machine")
+        panel.message = asArchive
+            ? String(localized: "Writes “\(vm.name)” as it was at “\(snapshot.name)”, packed into one archive. Unpack it on the other Mac and open it with UTM. The original is only read.")
+            : String(localized: "Writes “\(vm.name)” as it was at “\(snapshot.name)” as a complete machine UTM can open. The original is only read.")
+        panel.nameFieldStringValue = asArchive
+            ? "\(vm.name) — \(snapshot.name).utm.zip"
+            : "\(vm.name) — \(snapshot.name).utm"
+
+        guard panel.runModal() == .OK, let chosen = panel.url else { return }
+
+        // The bundle is built first either way; the archive is packed from it.
+        let bundleURL = asArchive
+            ? chosen.deletingPathExtension()   // strips .zip, leaving …utm
+            : chosen
+
+        await run(Activity(
+            title: String(localized: "Exporting “\(vm.name)”…"),
+            detail: String(localized: "Every disk is rewritten at this point. Expect this to take a while on a large machine.")
+        )) {
+            try await library.exportBundle(
+                snapshot, on: vm, to: bundleURL,
+                // Compressing inside the qcow2 is what makes the result small.
+                // Doing it here rather than only zipping afterwards also keeps
+                // the unpacked machine small on the far side.
+                compressDisks: true
+            ) { message in
+                await self.setActivity(Activity(title: String(localized: "Exporting “\(vm.name)”…"), detail: message))
+            }
+
+            if asArchive {
+                await self.setActivity(Activity(
+                    title: String(localized: "Packing the archive…"),
+                    detail: String(localized: "The finished machine is being wrapped into a single file.")
+                ))
+                try await VMLibrary.compress(bundle: bundleURL, to: chosen)
+            }
+
+            await MainActor.run {
+                self.lastOutcome = String(localized: "Exported to \(chosen.lastPathComponent).")
+            }
+        }
+    }
+
     // MARK: - Navigation helpers
 
     func revealInFinder(_ vm: VirtualMachine) {
         NSWorkspace.shared.activateFileViewerSelecting([vm.url])
     }
 
-    func openUTM() {
-        guard let url = UTMControl.applicationURL else { return }
-        NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+    func openUTM() { UTMControl.open() }
+
+    /// Jumps to this machine in UTM — for everything this app deliberately does
+    /// not do: editing hardware, ports, shared folders, display settings.
+    ///
+    /// Falls back to opening UTM plainly for a bundle UTM does not manage,
+    /// because handing it that bundle would import it as a second machine.
+    func openInUTM(_ vm: VirtualMachine) {
+        guard vm.isRegisteredWithUTM else { return openUTM() }
+        UTMControl.reveal(bundleAt: vm.url)
     }
 
     func openPrivacySettings() {

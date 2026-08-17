@@ -321,30 +321,40 @@ private struct TreeNodeCard: View {
                     .font(.caption.weight(.medium))
                     .foregroundStyle(.tint)
             } else {
-                Button("Restore") {
+                // Click restores; the arrow adds "and start again", which is the
+                // loop this view exists for.
+                Menu {
+                    Button("Restore and Start…") {
+                        model.sheet = .restore(snapshot, machine: vm.id, restartAfter: true)
+                    }
+                    .disabled(!vm.isRegisteredWithUTM)
+                } label: {
+                    Text("Restore")
+                } primaryAction: {
                     model.sheet = .restore(snapshot, machine: vm.id, restartAfter: false)
                 }
-                .secondaryActionStyle()
+                .menuStyle(.button)
                 .controlSize(.small)
+                .fixedSize()
                 .disabled(!vm.canReachWritableState || !snapshot.isComplete)
                 .help(vm.canBecomeWritableByShuttingDown
-                      ? String(localized: "Shut the machine down and roll the disk back to this point")
-                      : String(localized: "Roll the disk back to this point"))
+                      ? String(localized: "Shut the machine down and roll the disk back to this point (⌘↩)")
+                      : String(localized: "Roll the disk back to this point (⌘↩)"))
             }
 
             Menu {
-                Button("Restore and Start…") {
-                    model.sheet = .restore(snapshot, machine: vm.id, restartAfter: true)
-                }
-                .disabled(!vm.canReachWritableState || !vm.isRegisteredWithUTM || !snapshot.isComplete)
-
                 Button(isBaseline ? "Remove as Baseline" : "Set as Baseline") {
                     model.setBaseline(isBaseline ? nil : snapshot, for: vm)
                 }
                 Button(model.note(for: snapshot, in: vm) == nil ? "Add Note…" : "Edit Note…") {
                     model.sheet = .note(snapshot, machine: vm.id)
                 }
-                Button("Export…") { Task { await model.exportSnapshot(snapshot, on: vm.id) } }
+                Menu("Export") {
+                    Button("As a Machine…") { Task { await model.exportMachine(snapshot, on: vm.id, asArchive: false) } }
+                    Button("As a Compressed Archive…") { Task { await model.exportMachine(snapshot, on: vm.id, asArchive: true) } }
+                    Divider()
+                    Button("Disk Image Only…") { Task { await model.exportSnapshot(snapshot, on: vm.id) } }
+                }
 
                 Divider()
 

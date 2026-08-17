@@ -59,7 +59,12 @@ struct SnapshotListView: View {
         Button(model.note(for: snapshot, in: vm) == nil ? "Add Note…" : "Edit Note…") {
             model.sheet = .note(snapshot, machine: vm.id)
         }
-        Button("Export…") { Task { await model.exportSnapshot(snapshot, on: vm.id) } }
+        Menu("Export") {
+            Button("As a Machine…") { Task { await model.exportMachine(snapshot, on: vm.id, asArchive: false) } }
+            Button("As a Compressed Archive…") { Task { await model.exportMachine(snapshot, on: vm.id, asArchive: true) } }
+            Divider()
+            Button("Disk Image Only…") { Task { await model.exportSnapshot(snapshot, on: vm.id) } }
+        }
 
         Divider()
 
@@ -113,23 +118,47 @@ struct SnapshotRow: View {
                         .help("Missing on \(snapshot.missingFrom.count) of this machine's disks. Restoring is blocked, because it would leave the disks at different points in time.")
                 }
 
-                Button("Restore") {
+                // A split button: the click restores, the arrow offers the
+                // variant that also starts the machine again. That second one is
+                // the whole loop this app is built for — roll back, run, roll
+                // back — and burying it under an ellipsis made it invisible.
+                Menu {
+                    Button("Restore and Start…") {
+                        model.sheet = .restore(snapshot, machine: vm.id, restartAfter: true)
+                    }
+                    .disabled(!vm.isRegisteredWithUTM)
+                } label: {
+                    Text("Restore")
+                } primaryAction: {
                     model.sheet = .restore(snapshot, machine: vm.id, restartAfter: false)
                 }
-                .secondaryActionStyle()
+                .menuStyle(.button)
                 .controlSize(.small)
+                .fixedSize()
                 .disabled(!vm.canReachWritableState || !snapshot.isComplete)
+                .help(vm.canBecomeWritableByShuttingDown
+                      ? String(localized: "Shut the machine down and roll the disk back to this point (⌘↩)")
+                      : String(localized: "Roll the disk back to this point (⌘↩)"))
 
                 Menu {
-                    Button("Restore and Start…") { model.sheet = .restore(snapshot, machine: vm.id, restartAfter: true) }
-                        .disabled(!vm.canReachWritableState || !vm.isRegisteredWithUTM || !snapshot.isComplete)
                     Button(isBaseline ? "Remove as Baseline" : "Set as Baseline") {
                         model.setBaseline(isBaseline ? nil : snapshot, for: vm)
                     }
                     Button(model.note(for: snapshot, in: vm) == nil ? "Add Note…" : "Edit Note…") {
                         model.sheet = .note(snapshot, machine: vm.id)
                     }
-                    Button("Export…") { Task { await model.exportSnapshot(snapshot, on: vm.id) } }
+                    Menu("Export") {
+                        Button("As a Machine…") {
+                            Task { await model.exportMachine(snapshot, on: vm.id, asArchive: false) }
+                        }
+                        Button("As a Compressed Archive…") {
+                            Task { await model.exportMachine(snapshot, on: vm.id, asArchive: true) }
+                        }
+                        Divider()
+                        Button("Disk Image Only…") {
+                            Task { await model.exportSnapshot(snapshot, on: vm.id) }
+                        }
+                    }
                     Divider()
                     Button("Delete…", role: .destructive) { model.sheet = .delete(snapshot, machine: vm.id) }
                         .disabled(!vm.canModifyDisks)

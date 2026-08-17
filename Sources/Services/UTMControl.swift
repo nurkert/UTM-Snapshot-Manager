@@ -194,7 +194,21 @@ enum UTMControl {
         )
     }
 
-    static func revealInUTM(machineWith uuid: String) {
+    /// Opens UTM on a specific machine by handing it the bundle.
+    ///
+    /// Offered only for a bundle UTM already manages. Handing UTM a bundle it
+    /// does not know is an import, which would create a second entry for a
+    /// machine that already exists — the duplicate-identity problem this app
+    /// spends most of its effort avoiding.
+    static func reveal(bundleAt url: URL) {
+        guard let app = applicationURL else { return }
+        NSWorkspace.shared.open(
+            [url], withApplicationAt: app,
+            configuration: NSWorkspace.OpenConfiguration(), completionHandler: nil
+        )
+    }
+
+    static func open() {
         guard let url = applicationURL else { return }
         NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
     }

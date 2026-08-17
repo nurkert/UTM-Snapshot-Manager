@@ -76,9 +76,14 @@ struct AppCommands: Commands {
 
             Divider()
 
-            Button("Open in UTM") { model.openUTM() }
-                .keyboardShortcut("u", modifiers: .command)
-                .disabled(!UTMControl.isInstalled)
+            // Everything this app deliberately leaves alone — hardware, ports,
+            // shared folders, display — is one keystroke away in UTM, on the
+            // machine that is selected here.
+            Button("Open in UTM") {
+                if let vm { model.openInUTM(vm) } else { model.openUTM() }
+            }
+            .keyboardShortcut("u", modifiers: .command)
+            .disabled(!UTMControl.isInstalled)
 
             Button("Show in Finder") {
                 if let vm { model.revealInFinder(vm) }
@@ -93,6 +98,12 @@ struct AppCommands: Commands {
             }
             .keyboardShortcut(.return, modifiers: .command)
             .disabled(snapshot == nil || vm == nil || isBusy)
+
+            Button("Restore and Start…") {
+                if let snapshot, let vm { model.sheet = .restore(snapshot, machine: vm.id, restartAfter: true) }
+            }
+            .keyboardShortcut(.return, modifiers: [.command, .option])
+            .disabled(snapshot == nil || vm?.isRegisteredWithUTM != true || isBusy)
 
             Button("Reset to Baseline…") {
                 if let baseline = model.baselineSnapshot, let vm {
@@ -117,10 +128,21 @@ struct AppCommands: Commands {
             .keyboardShortcut("n", modifiers: [.command, .option])
             .disabled(snapshot == nil || vm == nil)
 
-            Button("Export…") {
-                if let snapshot, let vm { Task { await model.exportSnapshot(snapshot, on: vm.id) } }
+            Button("Export as Machine…") {
+                if let snapshot, let vm { Task { await model.exportMachine(snapshot, on: vm.id, asArchive: false) } }
             }
             .keyboardShortcut("e", modifiers: [.command, .shift])
+            .disabled(snapshot == nil || isBusy)
+
+            Button("Export as Compressed Archive…") {
+                if let snapshot, let vm { Task { await model.exportMachine(snapshot, on: vm.id, asArchive: true) } }
+            }
+            .keyboardShortcut("e", modifiers: [.command, .shift, .option])
+            .disabled(snapshot == nil || isBusy)
+
+            Button("Export Disk Image Only…") {
+                if let snapshot, let vm { Task { await model.exportSnapshot(snapshot, on: vm.id) } }
+            }
             .disabled(snapshot == nil || isBusy)
 
             Divider()
