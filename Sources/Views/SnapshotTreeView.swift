@@ -248,7 +248,6 @@ private struct TreeNodeCard: View {
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                         .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
                         .padding(.top, 1)
                 }
             }

@@ -423,6 +423,15 @@ final class AppModel: ObservableObject {
         var states: [String: RunState] = [:]
         for machine in utmMachines { states[machine.uuid] = machine.state }
 
+        // Reading the process table costs a command, so it is only paid for when
+        // it can actually change an answer: a machine we show as running that
+        // UTM now reports as off.
+        let needsProcessCheck = machines.contains { vm in
+            vm.isRegisteredWithUTM && vm.state == .running
+                && vm.uuid.flatMap { states[$0] } == .stopped
+        }
+        let commandLines = needsProcessCheck ? await ProcessTable.qemuCommandLines() : nil
+
         machines = machines.map { vm in
             // Only machines UTM manages take their state from UTM. A duplicated
             // bundle carries the original's UUID, and letting it inherit the
@@ -430,13 +439,26 @@ final class AppModel: ObservableObject {
             guard vm.isRegisteredWithUTM else { return vm }
             guard let uuid = vm.uuid, let state = states[uuid], state != vm.state else { return vm }
 
-            // Two states this quick poll must never overwrite, because they were
-            // established by evidence it does not re-gather: a suspend snapshot
-            // read from the image, and a process found holding the disk. UTM
-            // reporting "stopped" for either — a stale QEMU it no longer tracks,
-            // a parked memory state it forgot — would light the buttons back up
-            // on a machine that is not safe. Both wait for a full rescan.
-            if state == .stopped, vm.state == .suspended || vm.state == .running { return vm }
+            // A suspended machine is decided by the image — UTM reporting
+            // "stopped" does not disprove a parked memory state — so the poll
+            // never overrides it. That one waits for a full rescan.
+            if state == .stopped, vm.state == .suspended { return vm }
+
+            // A machine shown as running that UTM now calls stopped is the
+            // ordinary case of the guest having finished shutting down, and
+            // refusing to believe it left the banner claiming "is running right
+            // now" until the next full scan — with the shutdown button firing
+            // into a machine that was already off.
+            //
+            // It is still checked against the process table first: a QEMU that
+            // UTM has lost track of would otherwise light the write buttons back
+            // up on an image somebody still holds open. An unreadable process
+            // table answers "unknown", which keeps the machine marked running —
+            // not knowing is never a reason to unlock a disk.
+            if state == .stopped, vm.state == .running,
+               ProcessTable.diskUse(of: vm.disks, commandLines: commandLines) != .free {
+                return vm
+            }
 
             return vm.with(state: state)
         }
@@ -564,6 +586,8 @@ final class AppModel: ObservableObject {
         await run(Activity(title: String(localized: "Starting “\(vm.name)”…"))) {
             try await UTMControl.start(machineWith: uuid)
         }
+        // Success or failure, what is on screen has to match reality afterwards.
+        await refreshRunStates()
     }
 
     func stop(_ vm: VirtualMachine, method: UTMControl.StopMethod = .request) async {
@@ -577,6 +601,7 @@ final class AppModel: ObservableObject {
             try await UTMControl.stop(machineWith: uuid, method: method)
             try await self.waitForStop(uuid: uuid)
         }
+        await refreshRunStates()
     }
 
     func suspend(_ vm: VirtualMachine) async {
@@ -584,6 +609,7 @@ final class AppModel: ObservableObject {
         await run(Activity(title: String(localized: "Suspending “\(vm.name)”…"))) {
             try await UTMControl.suspend(machineWith: uuid)
         }
+        await refreshRunStates()
     }
 
     /// Brings a machine down as the first step of a disk operation and waits

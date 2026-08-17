@@ -93,7 +93,6 @@ struct Step: View {
                 .background(Circle().fill(.secondary))
             Text(text)
                 .font(.callout)
-                .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
     }

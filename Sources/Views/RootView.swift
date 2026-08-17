@@ -207,14 +207,15 @@ struct NoticeBar<Actions: View>: View {
                 .foregroundStyle(tint)
 
             VStack(alignment: .leading, spacing: 1) {
+                // See BlockerBanner: fixedSize inside an HStack with a Spacer
+                // makes the bar demand its unwrapped width and blows the layout
+                // out past the window.
                 Text(title)
                     .font(.callout.weight(.medium))
-                    .fixedSize(horizontal: false, vertical: true)
                 if let detail {
                     Text(detail)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
 

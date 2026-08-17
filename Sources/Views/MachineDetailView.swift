@@ -218,10 +218,16 @@ struct BlockerBanner: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.callout.weight(.semibold))
+                    // No .fixedSize here. Inside an HStack that also holds a
+                    // Spacer, `fixedSize(vertical: true)` makes the text ask for
+                    // its unwrapped width, the bar demands that width, and the
+                    // whole split view is laid out far wider than the window —
+                    // at which point nothing is visible at all. Text wraps on
+                    // its own; the modifier is only needed where a parent
+                    // actively compresses it.
                 Text(message)
                     .font(.callout)
                     .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Spacer(minLength: 8)

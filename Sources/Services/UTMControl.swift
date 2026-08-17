@@ -157,12 +157,30 @@ enum UTMControl {
         )
     }
 
+    /// Asks UTM to shut the machine down.
+    ///
+    /// A refusal because the machine is *already* off is treated as success: the
+    /// request has achieved exactly what it was asked to achieve, and reporting
+    /// it as an error leaves the user staring at a failure for the outcome they
+    /// wanted. It happens routinely — the guest can finish shutting down between
+    /// the state poll and the click.
     static func stop(machineWith uuid: String, method: StopMethod) async throws {
-        try await perform(
-            "stop virtual machine id \"\(uuid)\" by \(method.rawValue)",
-            uuid: uuid,
-            what: String(localized: "Stopping the machine")
-        )
+        do {
+            try await perform(
+                "stop virtual machine id \"\(uuid)\" by \(method.rawValue)",
+                uuid: uuid,
+                what: String(localized: "Stopping the machine")
+            )
+        } catch AppError.utmRefused(_, let reason) where Self.meansAlreadyStopped(reason) {
+            return
+        }
+    }
+
+    /// UTM's way of saying the machine is not running. The numeric code is the
+    /// reliable part; the wording is not guaranteed to stay the same.
+    static func meansAlreadyStopped(_ message: String) -> Bool {
+        message.contains("-2700")
+            || message.range(of: "not running", options: .caseInsensitive) != nil
     }
 
     /// Parks the machine's memory state and quits QEMU. UTM writes this into the
@@ -196,8 +214,24 @@ enum UTMControl {
         }
         guard result.ok else {
             if availability(forError: result.message) == .denied { throw AppError.automationDenied }
-            throw AppError.toolFailed(reason: result.message)
+            throw AppError.utmRefused(action: what, reason: readable(result.message))
         }
+    }
+
+    /// Strips osascript's scaffolding so the dialog shows what UTM said rather
+    /// than "26:99: execution error: UTM got an error: …".
+    private static func readable(_ message: String) -> String {
+        var text = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let range = text.range(of: "UTM got an error: ") {
+            text = String(text[range.upperBound...])
+        } else if let range = text.range(of: "execution error: ") {
+            text = String(text[range.upperBound...])
+        }
+        // The trailing "(-2700)" is for us, not for the reader.
+        if let paren = text.range(of: #" \(-?\d+\)$"#, options: .regularExpression) {
+            text.removeSubrange(paren)
+        }
+        return text.isEmpty ? message : text
     }
 
     // MARK: - Helpers

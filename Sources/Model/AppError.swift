@@ -48,6 +48,12 @@ enum AppError: LocalizedError, Equatable {
     /// UTM is not installed, so the machine cannot be controlled from here.
     case utmMissing
 
+    /// UTM accepted the message but refused to carry it out. Kept separate from
+    /// `toolFailed` because the two used to share a title that named qemu-img —
+    /// so a refusal from UTM was reported as a disk-tool failure, which sends
+    /// the reader looking in entirely the wrong place.
+    case utmRefused(action: String, reason: String)
+
     /// The volume holding the machine's disks has almost nothing left. Checked
     /// before a write rather than discovered halfway through one: qcow2 grows
     /// as the guest writes, and a `qemu-img` run that runs out of room partway
@@ -80,7 +86,9 @@ enum AppError: LocalizedError, Equatable {
         case .diskLayoutChanged(let vm):
             return String(localized: "The disks of “\(vm)” have changed.")
         case .toolFailed:
-            return String(localized: "qemu-img could not complete the operation.")
+            return String(localized: "The operation could not be completed.")
+        case .utmRefused(let action, _):
+            return String(localized: "UTM refused: \(action.lowercased()).")
         case .timedOut(let what, _):
             return String(localized: "\(what) took too long and was stopped.")
         case .automationDenied:
@@ -136,6 +144,9 @@ enum AppError: LocalizedError, Equatable {
             return String(localized: "“\(vm)” now has a different set of disks than when the list was built — one was probably added or removed in UTM. Nothing was changed, because acting on the old list would have left the new disk behind. Search again and retry.")
 
         case .toolFailed(let reason):
+            return reason
+
+        case .utmRefused(_, let reason):
             return reason
 
         case .timedOut(_, let seconds):
