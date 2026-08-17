@@ -73,6 +73,44 @@ struct GlassGroup<Content: View>: View {
     }
 }
 
+// MARK: - Sequenced explanation
+
+/// One numbered step in a dialog that spells out what an operation will do.
+///
+/// Every dialog that chains more than one action uses this, so "shut down, save
+/// a copy, roll back, start again" always reads the same way. A single Confirm
+/// that quietly shuts a machine down would be a surprise, however convenient.
+struct Step: View {
+    let number: Int
+    let text: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text("\(number)")
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(.white)
+                .frame(width: 16, height: 16)
+                .background(Circle().fill(.secondary))
+            Text(text)
+                .font(.callout)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+    }
+}
+
+/// The bordered block those steps sit in.
+struct StepList<Content: View>: View {
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) { content }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .noticeSurface(.secondary)
+    }
+}
+
 // MARK: - Status
 
 extension RunState {

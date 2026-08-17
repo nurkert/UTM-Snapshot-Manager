@@ -61,7 +61,7 @@ if pgrep -f "/Applications/$APP_NAME.app" >/dev/null 2>&1; then
   done
 
   if pgrep -f "/Applications/$APP_NAME.app" >/dev/null 2>&1; then
-    fail "“$APP_NAME” is still running and would not quit. Close it, then run this script again."
+    fail "“${APP_NAME}” is still running and would not quit. Close it, then run this script again."
   fi
 fi
 
@@ -73,7 +73,7 @@ cp -R "$PRODUCT" "$STAGING" || fail "Could not copy into /Applications."
 rm -rf "/Applications/$APP_NAME.app"
 mv "$STAGING" "/Applications/$APP_NAME.app"
 
-green "Done. “$APP_NAME” is in your Applications folder."
+green "Done. “${APP_NAME}” is in your Applications folder."
 echo
 echo "On first launch macOS will ask for two things:"
 echo "  • access to Documents/Downloads/Desktop, so your machines can be found"

@@ -19,9 +19,8 @@ struct RootView: View {
                 dismissButton: .default(Text(alert.isCritical ? "I understand" : "OK"))
             )
         }
-        .sheet(isPresented: $model.showsWelcome, onDismiss: { model.markWelcomeSeen() }) {
-            WelcomeView()
-        }
+        // One sheet modifier, one route. Two `.sheet` modifiers on the same
+        // view means whichever one loses the race simply never appears.
         .sheet(item: $model.sheet) { route in
             sheet(for: route).environmentObject(model)
         }
@@ -47,6 +46,10 @@ struct RootView: View {
             CheckReportSheet(lines: lines)
         case .automationHelp:
             AutomationHelpSheet()
+        case .welcome:
+            WelcomeView().onDisappear { model.markWelcomeSeen() }
+        case .note(let snapshot, let machineID):
+            NoteSheet(snapshot: snapshot, machineID: machineID)
         }
     }
 }
@@ -59,9 +62,11 @@ struct MainSplitView: View {
             SidebarView()
                 .navigationSplitViewColumnWidth(min: 260, ideal: 300, max: 380)
         } detail: {
-            detail
+            // Banners inset the content instead of floating over it. As an
+            // overlay they covered the top of whatever was being read, and two
+            // at once hid the machine's header entirely.
+            detail.safeAreaInset(edge: .top, spacing: 0) { notices }
         }
-        .overlay(alignment: .top) { notices }
         .overlay { ActivityOverlay(activity: model.activity) }
         // Runs after the view update that changed the selection, so it cannot
         // mutate published state mid-pass.
@@ -72,8 +77,26 @@ struct MainSplitView: View {
 
     // MARK: - Notices
 
+    /// True when at least one banner has something to say. Without this the
+    /// empty stack still contributed its padding, leaving a dead strip above
+    /// the content.
+    private var hasNotices: Bool {
+        model.permissionPending
+            || model.utmLibraryUnreadable
+            || !model.restrictedFolders.isEmpty
+            || model.utmAvailability == .denied
+            || model.lastOutcome != nil
+    }
+
     @ViewBuilder
     private var notices: some View {
+        if hasNotices {
+            noticeStack
+        }
+    }
+
+    @ViewBuilder
+    private var noticeStack: some View {
         VStack(spacing: 8) {
             if model.permissionPending {
                 NoticeBar(
@@ -136,7 +159,9 @@ struct MainSplitView: View {
                 .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
-        .padding(12)
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
+        .padding(.bottom, 10)
         .animation(.snappy, value: model.lastOutcome)
         .animation(.snappy, value: model.restrictedFolders)
     }
@@ -198,9 +223,8 @@ struct NoticeBar<Actions: View>: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .frame(maxWidth: 760)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .noticeSurface(tint)
-        .shadow(color: .black.opacity(0.12), radius: 10, y: 4)
     }
 }
 

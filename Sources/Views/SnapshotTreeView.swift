@@ -17,98 +17,75 @@ struct SnapshotTreeView: View {
     private var lineage: Lineage { model.lineage(for: vm) }
 
     var body: some View {
-        VStack(spacing: 0) {
-            actionBar
-            Divider()
+        let roots = lineage.tree(from: vm.snapshots)
 
-            ScrollView {
-                GlassGroup(spacing: 18) {
-                    VStack(alignment: .leading, spacing: TreeMetrics.siblingGap) {
-                        let roots = lineage.tree(from: vm.snapshots)
-                        ForEach(Array(roots.enumerated()), id: \.element.id) { index, node in
-                            TreeBranch(
-                                node: node,
-                                vm: vm,
-                                current: lineage.current,
-                                isLastSibling: index == roots.count - 1
-                            )
-                        }
-
-                        if lineage.current == nil && !vm.snapshots.isEmpty {
-                            unmarkedStateNote
-                        }
-                        if lineage.parents.isEmpty && vm.snapshots.count > 1 {
-                            flatHistoryNote
-                        }
+        ScrollView {
+            // One container for all the cards: neighbouring glass surfaces
+            // blend into each other instead of stacking into a frosted mess.
+            GlassGroup(spacing: 18) {
+                VStack(alignment: .leading, spacing: TreeMetrics.rowGap) {
+                    ForEach(roots) { node in
+                        TreeBranch(node: node, vm: vm, current: lineage.current)
                     }
-                    .padding(22)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if lineage.current == nil && !vm.snapshots.isEmpty {
+                        unmarkedStateNote
+                    }
+                    if lineage.parents.isEmpty && vm.snapshots.count > 1 {
+                        flatHistoryNote
+                    }
                 }
             }
-            .background(alignment: .top) {
-                // A faint wash so the cards sit on something rather than
-                // floating on the window's bare background.
-                LinearGradient(
-                    colors: [.accentColor.opacity(0.06), .clear],
-                    startPoint: .top, endPoint: .bottom
-                )
-                .frame(height: 220)
-                .ignoresSafeArea()
+            .padding(.horizontal, 26)
+            .padding(.vertical, 24)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            // Connectors are drawn behind the cards from the dots' *measured*
+            // positions. The previous version positioned them from constants —
+            // a card that grew a second tag left its line pointing at nothing.
+            .backgroundPreferenceValue(DotAnchors.self) { anchors in
+                GeometryReader { proxy in
+                    TreeConnectors(edges: edges(of: roots), anchors: anchors, proxy: proxy)
+                }
             }
         }
+        .background(alignment: .top) { wash }
     }
 
-    // MARK: - Action bar
+    /// A faint wash at the top so the cards sit on something rather than
+    /// floating on the window's bare background. Bounded by the scroll view —
+    /// it must not bleed up into the toolbar.
+    private var wash: some View {
+        LinearGradient(
+            colors: [.accentColor.opacity(0.05), .clear],
+            startPoint: .top, endPoint: .bottom
+        )
+        .frame(height: 240)
+        .allowsHitTesting(false)
+    }
 
-    private var actionBar: some View {
-        HStack(spacing: 10) {
-            if vm.canModifyDisks {
-                Button {
-                    model.beginNewSnapshot()
-                } label: {
-                    Label("Save Current State", systemImage: "camera.aperture")
-                }
-                .primaryActionStyle()
-                .help("Save where the machine is right now as a new restore point (⌘N)")
-            }
-
-            if vm.canStart {
-                Button { Task { await model.start(vm) } } label: {
-                    Label("Start", systemImage: "play.fill")
-                }
-                .secondaryActionStyle()
-                .help("Start this machine in UTM (⇧⌘S)")
-            }
-
-            if vm.canStop {
-                Button { Task { await model.stop(vm, method: .request) } } label: {
-                    Label("Shut Down", systemImage: "stop.fill")
-                }
-                .secondaryActionStyle()
-                .help("Ask the guest to shut down (⇧⌘P)")
-            }
-
-            Spacer()
-
-            if let current = lineage.current {
-                Label("At “\(current)”", systemImage: "location.fill")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+    /// Every parent → child pair in the drawn tree, flattened.
+    private func edges(of roots: [LineageNode]) -> [TreeEdge] {
+        var result: [TreeEdge] = []
+        func walk(_ node: LineageNode) {
+            for child in node.children {
+                result.append(TreeEdge(from: node.id, to: child.id))
+                walk(child)
             }
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
+        roots.forEach(walk)
+        return result
     }
 
     // MARK: - Notes
 
     private var unmarkedStateNote: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 14) {
             ZStack {
-                Circle().fill(.tint.opacity(0.18)).frame(width: 26, height: 26)
+                Circle().fill(.tint.opacity(0.16)).frame(width: 26, height: 26)
                 Circle().fill(.tint).frame(width: 9, height: 9)
             }
+            .frame(width: TreeMetrics.markerSize, height: TreeMetrics.markerSize)
+
             VStack(alignment: .leading, spacing: 1) {
                 Text("Current state")
                     .font(.callout.weight(.medium))
@@ -117,7 +94,7 @@ struct SnapshotTreeView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .padding(.top, 4)
+        .padding(.top, 6)
     }
 
     private var flatHistoryNote: some View {
@@ -126,61 +103,91 @@ struct SnapshotTreeView: View {
             .foregroundStyle(.tertiary)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: 480, alignment: .leading)
-            .padding(.top, 16)
+            .padding(.top, 18)
     }
 }
 
 // MARK: - Layout constants
 
 private enum TreeMetrics {
-    /// Width of the column the connector curve is drawn in.
-    static let connectorWidth: CGFloat = 34
-    /// Vertical centre of a card's dot, measured from the card's top.
-    static let dotCentre: CGFloat = 27
-    static let siblingGap: CGFloat = 10
+    /// How far a child sits to the right of its parent.
+    static let indent: CGFloat = 30
+    static let rowGap: CGFloat = 10
+    static let markerSize: CGFloat = 30
+    static let dotRadius: CGFloat = 8
+    static let corner: CGFloat = 11
+    static let cardMaxWidth: CGFloat = 620
 }
 
-// MARK: - Connector
+// MARK: - Connectors
 
-/// The line from a parent card down to one child.
-///
-/// Draws the vertical drop, an eased corner, and the horizontal run into the
-/// child's dot. When more siblings follow, the vertical continues past the
-/// corner so the whole family hangs off one spine.
-private struct BranchConnector: Shape {
-    let isLast: Bool
+private struct TreeEdge {
+    let from: String
+    let to: String
+}
 
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        let x = rect.minX + 15
-        let corner: CGFloat = 12
-        let y = rect.minY + TreeMetrics.dotCentre
+/// Where one card's dot sits, in the tree canvas's coordinate space.
+private struct DotAnchors: PreferenceKey {
+    static var defaultValue: [String: Anchor<CGPoint>] = [:]
 
-        path.move(to: CGPoint(x: x, y: rect.minY))
-        path.addLine(to: CGPoint(x: x, y: y - corner))
-        path.addQuadCurve(
-            to: CGPoint(x: x + corner, y: y),
-            control: CGPoint(x: x, y: y)
-        )
-        path.addLine(to: CGPoint(x: rect.maxX, y: y))
-
-        if !isLast {
-            path.move(to: CGPoint(x: x, y: y - corner))
-            path.addLine(to: CGPoint(x: x, y: rect.maxY))
-        }
-        return path
+    static func reduce(
+        value: inout [String: Anchor<CGPoint>],
+        nextValue: () -> [String: Anchor<CGPoint>]
+    ) {
+        value.merge(nextValue()) { _, new in new }
     }
 }
+
+/// The lines from each parent dot down into its children.
+///
+/// One path per edge, all sharing the parent's x — so several children read as
+/// one spine with a branch peeling off at each row, and the geometry stays
+/// correct no matter how tall a card turns out to be.
+private struct TreeConnectors: View {
+    let edges: [TreeEdge]
+    let anchors: [String: Anchor<CGPoint>]
+    let proxy: GeometryProxy
+
+    var body: some View {
+        Path { path in
+            for edge in edges {
+                guard let fromAnchor = anchors[edge.from],
+                      let toAnchor = anchors[edge.to] else { continue }
+
+                let start = proxy[fromAnchor]
+                let end = proxy[toAnchor]
+                let drop = end.y - start.y
+                guard drop > 0 else { continue }
+
+                let corner = min(TreeMetrics.corner, drop / 2)
+
+                path.move(to: CGPoint(x: start.x, y: start.y + TreeMetrics.dotRadius + 3))
+                path.addLine(to: CGPoint(x: start.x, y: end.y - corner))
+                path.addQuadCurve(
+                    to: CGPoint(x: start.x + corner, y: end.y),
+                    control: CGPoint(x: start.x, y: end.y)
+                )
+                path.addLine(to: CGPoint(x: end.x - TreeMetrics.dotRadius - 3, y: end.y))
+            }
+        }
+        .stroke(
+            .quaternary,
+            style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round)
+        )
+        .allowsHitTesting(false)
+    }
+}
+
+// MARK: - Branch
 
 /// One node plus everything descended from it.
 private struct TreeBranch: View {
     let node: LineageNode
     let vm: VirtualMachine
     let current: String?
-    let isLastSibling: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: TreeMetrics.siblingGap) {
+        VStack(alignment: .leading, spacing: TreeMetrics.rowGap) {
             TreeNodeCard(
                 snapshot: node.snapshot,
                 vm: vm,
@@ -188,25 +195,9 @@ private struct TreeBranch: View {
                 hasChildren: !node.children.isEmpty
             )
 
-            ForEach(Array(node.children.enumerated()), id: \.element.id) { index, child in
-                HStack(alignment: .top, spacing: 0) {
-                    BranchConnector(isLast: index == node.children.count - 1)
-                        .stroke(
-                            .quaternary,
-                            style: StrokeStyle(lineWidth: 1.5, lineCap: .round)
-                        )
-                        .frame(width: TreeMetrics.connectorWidth)
-
-                    TreeBranch(
-                        node: child,
-                        vm: vm,
-                        current: current,
-                        isLastSibling: index == node.children.count - 1
-                    )
-                }
-                // The connector starts at the parent's baseline, so the gap
-                // above each child belongs to the drawing, not to the spacing.
-                .padding(.top, -TreeMetrics.siblingGap)
+            ForEach(node.children) { child in
+                TreeBranch(node: child, vm: vm, current: current)
+                    .padding(.leading, TreeMetrics.indent)
             }
         }
     }
@@ -226,12 +217,6 @@ private struct TreeNodeCard: View {
 
     private var isBaseline: Bool { model.isBaseline(snapshot, in: vm) }
     private var isSelected: Bool { model.selectedSnapshotID == snapshot.id }
-
-    private var accent: Color {
-        if isCurrent { return .accentColor }
-        if isBaseline { return .accentColor }
-        return .secondary
-    }
 
     var body: some View {
         HStack(spacing: 14) {
@@ -257,6 +242,15 @@ private struct TreeNodeCard: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+
+                if let note = model.note(for: snapshot, in: vm) {
+                    Text(note)
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 1)
+                }
             }
 
             Spacer(minLength: 12)
@@ -265,20 +259,15 @@ private struct TreeNodeCard: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
-        .frame(maxWidth: 560, alignment: .leading)
+        .frame(maxWidth: TreeMetrics.cardMaxWidth, alignment: .leading)
         .glassCard(cornerRadius: 13, tint: isCurrent ? .accentColor : nil)
         .overlay {
             RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .strokeBorder(
-                    isSelected ? AnyShapeStyle(Color.accentColor)
-                               : (isCurrent ? AnyShapeStyle(Color.accentColor.opacity(0.45))
-                                            : AnyShapeStyle(Color.clear)),
-                    lineWidth: isSelected ? 2 : 1.5
-                )
+                .strokeBorder(borderStyle, lineWidth: isSelected ? 2 : 1.5)
         }
-        .shadow(color: .black.opacity(isCurrent ? 0.14 : 0.07),
-                radius: isCurrent ? 10 : 5, y: 3)
-        .contentShape(Rectangle())
+        .shadow(color: .black.opacity(shadowOpacity), radius: isCurrent ? 10 : 5, y: 3)
+        .contentShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+        .help(snapshot.absoluteDate)
         .onTapGesture { model.selectedSnapshotID = snapshot.id }
         .onHover { isHovering = $0 }
         .animation(.easeOut(duration: 0.14), value: isHovering)
@@ -287,14 +276,31 @@ private struct TreeNodeCard: View {
         .accessibilityLabel(accessibilityLabel)
     }
 
-    /// The dot on the spine. Filled and haloed where the machine actually is.
+    private var borderStyle: AnyShapeStyle {
+        if isSelected { return AnyShapeStyle(Color.accentColor) }
+        if isCurrent { return AnyShapeStyle(Color.accentColor.opacity(0.45)) }
+        if isHovering { return AnyShapeStyle(Color.primary.opacity(0.12)) }
+        return AnyShapeStyle(Color.clear)
+    }
+
+    private var shadowOpacity: Double {
+        if isCurrent { return 0.14 }
+        return isHovering ? 0.11 : 0.07
+    }
+
+    /// The dot on the spine. Publishes its centre so the connectors can be drawn
+    /// to it rather than to an assumed offset.
     private var marker: some View {
         ZStack {
             if isCurrent {
                 Circle().fill(Color.accentColor.opacity(0.18)).frame(width: 30, height: 30)
             }
             Circle()
-                .strokeBorder(accent.opacity(isCurrent ? 1 : 0.45), lineWidth: 2)
+                .strokeBorder(
+                    (isCurrent || isBaseline ? Color.accentColor : .secondary)
+                        .opacity(isCurrent ? 1 : 0.45),
+                    lineWidth: 2
+                )
                 .frame(width: 16, height: 16)
             if isCurrent {
                 Circle().fill(Color.accentColor).frame(width: 8, height: 8)
@@ -304,7 +310,8 @@ private struct TreeNodeCard: View {
                     .foregroundStyle(.tint)
             }
         }
-        .frame(width: 30, height: 30)
+        .frame(width: TreeMetrics.markerSize, height: TreeMetrics.markerSize)
+        .anchorPreference(key: DotAnchors.self, value: .center) { [snapshot.id: $0] }
     }
 
     @ViewBuilder
@@ -320,18 +327,23 @@ private struct TreeNodeCard: View {
                 }
                 .secondaryActionStyle()
                 .controlSize(.small)
-                .disabled(!vm.canModifyDisks || !snapshot.isComplete)
-                .help("Roll the disk back to this point")
+                .disabled(!vm.canReachWritableState || !snapshot.isComplete)
+                .help(vm.canBecomeWritableByShuttingDown
+                      ? String(localized: "Shut the machine down and roll the disk back to this point")
+                      : String(localized: "Roll the disk back to this point"))
             }
 
             Menu {
                 Button("Restore and Start…") {
                     model.sheet = .restore(snapshot, machine: vm.id, restartAfter: true)
                 }
-                .disabled(!vm.canModifyDisks || !vm.isRegisteredWithUTM || !snapshot.isComplete)
+                .disabled(!vm.canReachWritableState || !vm.isRegisteredWithUTM || !snapshot.isComplete)
 
                 Button(isBaseline ? "Remove as Baseline" : "Set as Baseline") {
                     model.setBaseline(isBaseline ? nil : snapshot, for: vm)
+                }
+                Button(model.note(for: snapshot, in: vm) == nil ? "Add Note…" : "Edit Note…") {
+                    model.sheet = .note(snapshot, machine: vm.id)
                 }
                 Button("Export…") { Task { await model.exportSnapshot(snapshot, on: vm.id) } }
 

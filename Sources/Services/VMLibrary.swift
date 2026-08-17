@@ -298,6 +298,38 @@ struct VMLibrary: Sendable {
     /// UTM here, and anything other than a definite "stopped" refuses the write.
     /// Crucially, an inconclusive answer refuses too: not knowing is a reason to
     /// stop, not a reason to proceed.
+    /// The floor below which a write is refused.
+    ///
+    /// Not an estimate of what the snapshot will cost — on a stopped machine a
+    /// new restore point costs almost nothing up front, and what it really
+    /// costs accrues later as the guest writes and clusters are copied. It is a
+    /// floor under the volume itself, because `qemu-img` updating an image's
+    /// metadata on a full volume is how a healthy image becomes a broken one.
+    static let minimumFreeBytes: Int64 = 512 * 1024 * 1024
+
+    /// Refuses to write when the volume holding the disks is nearly full.
+    ///
+    /// A volume that cannot be measured is not treated as full: the check is
+    /// there to catch a real, visible shortage, and failing closed on a missing
+    /// number would block writes for a reason the user cannot act on.
+    static func ensureRoomToWrite(_ vm: VirtualMachine) throws {
+        guard let disk = vm.disks.first else { return }
+        guard let free = freeBytes(onVolumeContaining: disk.url), free < minimumFreeBytes else {
+            return
+        }
+        throw AppError.lowDiskSpace(volume: volumeName(for: disk.url), freeBytes: free)
+    }
+
+    static func freeBytes(onVolumeContaining url: URL) -> Int64? {
+        let values = try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+        return values?.volumeAvailableCapacityForImportantUsage
+    }
+
+    private static func volumeName(for url: URL) -> String {
+        let values = try? url.resourceValues(forKeys: [.volumeNameKey])
+        return values?.volumeName ?? String(localized: "The disk")
+    }
+
     func verifyWritable(_ vm: VirtualMachine) async throws {
         guard vm.hasAccess else {
             throw AppError.toolFailed(reason: String(localized: "This machine's folder cannot be read."))
@@ -385,6 +417,7 @@ struct VMLibrary: Sendable {
     /// offered — and then partially applied — later on.
     func createSnapshot(named name: String, on vm: VirtualMachine) async throws {
         try await verifyWritable(vm)
+        try Self.ensureRoomToWrite(vm)
 
         var written: [DiskImage] = []
         for disk in vm.disks {
@@ -428,6 +461,7 @@ struct VMLibrary: Sendable {
     /// serious problem it is, naming exactly which disks changed.
     func restore(_ snapshot: Snapshot, on vm: VirtualMachine) async throws {
         try await verifyWritable(vm)
+        try Self.ensureRoomToWrite(vm)
 
         guard snapshot.isComplete else {
             throw AppError.incompleteSnapshot(

@@ -32,6 +32,8 @@ enum SheetRoute: Identifiable, Equatable {
     case delete(Snapshot, machine: VirtualMachine.ID)
     case checkReport([String])
     case automationHelp
+    case welcome
+    case note(Snapshot, machine: VirtualMachine.ID)
 
     var id: String {
         switch self {
@@ -40,6 +42,8 @@ enum SheetRoute: Identifiable, Equatable {
         case .delete(let s, let m): return "delete-\(m)-\(s.id)"
         case .checkReport: return "check"
         case .automationHelp: return "automation"
+        case .welcome: return "welcome"
+        case .note(let s, let m): return "note-\(m)-\(s.id)"
         }
     }
 }
@@ -104,7 +108,6 @@ final class AppModel: ObservableObject {
     @Published private(set) var activity: Activity?
     @Published var alert: AppAlert?
     @Published var sheet: SheetRoute?
-    @Published var showsWelcome = false
 
     /// Confirmation of what just happened, shown briefly in place of nothing at
     /// all. Rolling a disk back is a big event and deserves an acknowledgement.
@@ -146,16 +149,82 @@ final class AppModel: ObservableObject {
     @Published private(set) var lineages: [String: Lineage] = [:]
 
     func lineage(for vm: VirtualMachine) -> Lineage {
-        var value = lineages[vm.id] ?? Lineage()
+        var value = lineages[vm.recordKey] ?? Lineage()
         value.prune(to: Set(vm.snapshots.map(\.name)))
         return value
     }
 
     private func updateLineage(for machineID: VirtualMachine.ID, _ change: (inout Lineage) -> Void) {
-        var value = lineages[machineID] ?? Lineage()
+        let key = recordKey(for: machineID)
+        var value = lineages[key] ?? Lineage()
         change(&value)
-        lineages[machineID] = value
+        lineages[key] = value
         saveLineages()
+    }
+
+    /// Resolves a machine's storage key from its path. Falls back to the path
+    /// for a bundle with no readable UUID — such a machine cannot be told apart
+    /// from a copy of itself anyway, so its records stay tied to where it lies.
+    private func recordKey(for machineID: VirtualMachine.ID) -> String {
+        machines.first { $0.id == machineID }?.recordKey ?? machineID
+    }
+
+    // MARK: - Notes
+
+    /// What a restore point was for, in the user's own words.
+    ///
+    /// Kept beside the lineage rather than in the image: qcow2 stores a name
+    /// and a timestamp per snapshot and nothing else, and there is no way to
+    /// attach text to one without rewriting it. Machine key → point name → note.
+    ///
+    /// A name has to stay short enough to read in a row; the reason a point
+    /// exists — the CVE, the ticket, the build under test — does not fit there
+    /// and is exactly what is missing three weeks later.
+    @Published private(set) var notes: [String: [String: String]] = [:]
+
+    func note(for snapshot: Snapshot, in vm: VirtualMachine) -> String? {
+        let text = notes[vm.recordKey]?[snapshot.name]
+        return (text?.isEmpty ?? true) ? nil : text
+    }
+
+    func setNote(_ text: String?, for snapshot: Snapshot, in vm: VirtualMachine) {
+        let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        var forMachine = notes[vm.recordKey] ?? [:]
+        if trimmed.isEmpty {
+            forMachine.removeValue(forKey: snapshot.name)
+        } else {
+            forMachine[snapshot.name] = trimmed
+        }
+        notes[vm.recordKey] = forMachine.isEmpty ? nil : forMachine
+        saveNotes()
+    }
+
+    /// Drops notes for points that no longer exist, so a name reused later does
+    /// not inherit the previous point's description.
+    private func pruneNotes() {
+        var changed = false
+        for vm in machines {
+            guard var forMachine = notes[vm.recordKey] else { continue }
+            let existing = Set(vm.snapshots.map(\.name))
+            let stale = forMachine.keys.filter { !existing.contains($0) }
+            guard !stale.isEmpty else { continue }
+            stale.forEach { forMachine.removeValue(forKey: $0) }
+            notes[vm.recordKey] = forMachine.isEmpty ? nil : forMachine
+            changed = true
+        }
+        if changed { saveNotes() }
+    }
+
+    private func saveNotes() {
+        guard let data = try? JSONEncoder().encode(notes) else { return }
+        UserDefaults.standard.set(data, forKey: notesKey)
+    }
+
+    private func loadNotes() {
+        guard let data = UserDefaults.standard.data(forKey: notesKey),
+              let decoded = try? JSONDecoder().decode([String: [String: String]].self, from: data)
+        else { return }
+        notes = decoded
     }
 
     private func saveLineages() {
@@ -173,6 +242,7 @@ final class AppModel: ObservableObject {
     private let baselineKey = "baselineSnapshots"
     private let welcomeKey = "hasSeenWelcome"
     private let lineageKey = "snapshotLineages"
+    private let notesKey = "snapshotNotes"
     private let detailModeKey = "detailMode"
 
     private var hasLoadedOnce = false
@@ -197,7 +267,7 @@ final class AppModel: ObservableObject {
     /// Snapshots with the pinned baseline floated to the top.
     var orderedSnapshots: [Snapshot] {
         guard let vm = selectedMachine else { return [] }
-        let baseline = baselines[vm.id]
+        let baseline = baselines[vm.recordKey]
         return vm.snapshots.sorted { lhs, rhs in
             if lhs.name == baseline { return true }
             if rhs.name == baseline { return false }
@@ -206,11 +276,11 @@ final class AppModel: ObservableObject {
     }
 
     func isBaseline(_ snapshot: Snapshot, in vm: VirtualMachine) -> Bool {
-        baselines[vm.id] == snapshot.name
+        baselines[vm.recordKey] == snapshot.name
     }
 
     var baselineSnapshot: Snapshot? {
-        guard let vm = selectedMachine, let name = baselines[vm.id] else { return nil }
+        guard let vm = selectedMachine, let name = baselines[vm.recordKey] else { return nil }
         return vm.snapshots.first { $0.name == name }
     }
 
@@ -237,11 +307,12 @@ final class AppModel: ObservableObject {
 
         baselines = (UserDefaults.standard.dictionary(forKey: baselineKey) as? [String: String]) ?? [:]
         loadLineages()
+        loadNotes()
         if let raw = UserDefaults.standard.string(forKey: detailModeKey),
            let mode = DetailMode(rawValue: raw) {
             detailMode = mode
         }
-        if !UserDefaults.standard.bool(forKey: welcomeKey) { showsWelcome = true }
+        if !UserDefaults.standard.bool(forKey: welcomeKey) { sheet = .welcome }
 
         await checkPrerequisites()
         await refresh()
@@ -427,6 +498,8 @@ final class AppModel: ObservableObject {
 
             scanWasIncomplete = false
             machines = result.machines
+            adoptRecordsFromPreviousLocation()
+            pruneNotes()
 
             if selectedMachineID == nil || !machines.contains(where: { $0.id == selectedMachineID }) {
                 selectedMachineID = machines.first?.id
@@ -435,13 +508,51 @@ final class AppModel: ObservableObject {
         } while refreshQueued
     }
 
+    /// Moves records that were filed under a machine's old path onto its UUID.
+    ///
+    /// Covers both the bundle being moved or renamed and the upgrade from the
+    /// builds that filed everything by path. Without it, dragging a `.utm` to
+    /// another folder silently flattens its tree and drops its baseline — the
+    /// restore points are all still in the image, but the app looks like it
+    /// threw them away.
+    ///
+    /// A record already filed under the UUID wins: it is the newer one, and a
+    /// stale path entry from a copy must not overwrite it.
+    private func adoptRecordsFromPreviousLocation() {
+        var movedBaselines = false
+        var movedLineages = false
+        var movedNotes = false
+
+        for vm in machines {
+            let key = vm.recordKey
+            guard key != vm.id else { continue }
+
+            if let orphan = baselines.removeValue(forKey: vm.id) {
+                if baselines[key] == nil { baselines[key] = orphan }
+                movedBaselines = true
+            }
+            if let orphan = lineages.removeValue(forKey: vm.id) {
+                if lineages[key] == nil { lineages[key] = orphan }
+                movedLineages = true
+            }
+            if let orphan = notes.removeValue(forKey: vm.id) {
+                if notes[key] == nil { notes[key] = orphan }
+                movedNotes = true
+            }
+        }
+
+        if movedBaselines { UserDefaults.standard.set(baselines, forKey: baselineKey) }
+        if movedLineages { saveLineages() }
+        if movedNotes { saveNotes() }
+    }
+
     // MARK: - Baseline
 
     func setBaseline(_ snapshot: Snapshot?, for vm: VirtualMachine) {
         if let snapshot {
-            baselines[vm.id] = snapshot.name
+            baselines[vm.recordKey] = snapshot.name
         } else {
-            baselines.removeValue(forKey: vm.id)
+            baselines.removeValue(forKey: vm.recordKey)
         }
         UserDefaults.standard.set(baselines, forKey: baselineKey)
     }
@@ -475,6 +586,28 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Brings a machine down as the first step of a disk operation and waits
+    /// until it is really down, returning it with its state corrected.
+    ///
+    /// Shared by every write path so the chained operations — "shut down and
+    /// save", "shut down, roll back and start again" — all go through the same
+    /// wait. A no-op for a machine that is already off.
+    private func shutDownIfNeeded(
+        _ machine: VirtualMachine,
+        because reason: String
+    ) async throws -> VirtualMachine {
+        guard !machine.state.allowsDiskWrites, machine.canStop, let uuid = machine.uuid else {
+            return machine
+        }
+        await setActivity(Activity(
+            title: String(localized: "Shutting “\(machine.name)” down…"),
+            detail: reason
+        ))
+        try await UTMControl.stop(machineWith: uuid, method: .request)
+        try await waitForStop(uuid: uuid)
+        return machine.with(state: .stopped)
+    }
+
     /// Polls until the machine is actually down. `stop` returns as soon as the
     /// request is delivered, and writing to a disk that is merely on its way out
     /// is exactly as damaging as writing to a running one.
@@ -490,8 +623,10 @@ final class AppModel: ObservableObject {
 
     // MARK: - Snapshot actions
 
+    /// Opens the dialog for a machine that is writable *or* can be made writable
+    /// by shutting it down. The dialog itself says which of the two it is.
     func beginNewSnapshot() {
-        guard let vm = selectedMachine, vm.canModifyDisks else { return }
+        guard let vm = selectedMachine, vm.canReachWritableState else { return }
         sheet = .newSnapshot(machine: vm.id)
     }
 
@@ -508,15 +643,24 @@ final class AppModel: ObservableObject {
         return vm
     }
 
+    /// Saves a restore point, shutting the machine down first if it is still
+    /// running. The dialog has already said that this is what will happen.
     func createSnapshot(named name: String, on machineID: VirtualMachine.ID) async {
         guard let vm = machine(machineID), let library else { return }
-        await run(Activity(
-            title: String(localized: "Saving “\(name)”…"),
-            detail: String(localized: "Writing a restore point to \(vm.disks.count == 1 ? "the disk" : "\(vm.disks.count) disks").")
-        )) {
-            try await library.createSnapshot(named: name, on: vm)
+        await run(Activity(title: String(localized: "Preparing…"))) {
+            let target = try await self.shutDownIfNeeded(
+                vm,
+                because: String(localized: "A restore point can only be written while the machine is off.")
+            )
+
+            await self.setActivity(Activity(
+                title: String(localized: "Saving “\(name)”…"),
+                detail: String(localized: "Writing a restore point to \(target.disks.count == 1 ? "the disk" : "\(target.disks.count) disks").")
+            ))
+            try await library.createSnapshot(named: name, on: target)
+
             await MainActor.run {
-                self.updateLineage(for: vm.id) { $0.recordSnapshot(named: name) }
+                self.updateLineage(for: target.id) { $0.recordSnapshot(named: name) }
                 self.lastOutcome = String(localized: "Saved “\(name)”.")
             }
         }
@@ -535,17 +679,10 @@ final class AppModel: ObservableObject {
         guard let vm = machine(machineID), let library else { return }
 
         await run(Activity(title: String(localized: "Preparing…"))) {
-            var machine = vm
-
-            if !machine.state.allowsDiskWrites, machine.canStop, let uuid = machine.uuid {
-                await self.setActivity(Activity(
-                    title: String(localized: "Shutting “\(machine.name)” down…"),
-                    detail: String(localized: "A disk cannot be rolled back while the machine is using it.")
-                ))
-                try await UTMControl.stop(machineWith: uuid, method: .request)
-                try await self.waitForStop(uuid: uuid)
-                machine = machine.with(state: .stopped)
-            }
+            let machine = try await self.shutDownIfNeeded(
+                vm,
+                because: String(localized: "A disk cannot be rolled back while the machine is using it.")
+            )
 
             if keepingSafetyCopy {
                 let safetyName = self.uniqueName(
@@ -587,7 +724,7 @@ final class AppModel: ObservableObject {
         await run(Activity(title: String(localized: "Deleting “\(snapshot.name)”…"))) {
             try await library.delete(snapshot, on: vm)
             await MainActor.run {
-                if self.baselines[vm.id] == snapshot.name { self.setBaseline(nil, for: vm) }
+                if self.baselines[vm.recordKey] == snapshot.name { self.setBaseline(nil, for: vm) }
                 self.updateLineage(for: vm.id) { $0.forget(snapshot.name) }
                 self.lastOutcome = String(localized: "Deleted “\(snapshot.name)”.")
             }

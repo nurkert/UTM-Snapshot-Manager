@@ -48,6 +48,16 @@ struct VirtualMachine: Identifiable, Hashable, Sendable {
 
     var id: String { url.path }
 
+    /// The key everything this app remembers about a machine is filed under —
+    /// its baseline and its recorded ancestry.
+    ///
+    /// Deliberately not the path. Moving a `.utm` bundle to another folder, or
+    /// renaming it, changes the path and would orphan every record: the tree
+    /// would flatten and the baseline mark would vanish, which reads as "my
+    /// snapshots are gone" even though the images are untouched. The UUID is
+    /// written inside the bundle and travels with it.
+    var recordKey: String { uuid ?? id }
+
     var blocker: Blocker? {
         if !hasAccess { return .noAccess }
         if backend == .apple { return .appleBackend }
@@ -61,6 +71,24 @@ struct VirtualMachine: Identifiable, Hashable, Sendable {
     /// disabled behind this, and it is re-evaluated against UTM immediately
     /// before the write itself.
     var canModifyDisks: Bool { blocker == nil }
+
+    /// True when the only thing between this machine and a restore point is
+    /// that it is still running, and UTM can be asked to shut it down.
+    ///
+    /// This is what keeps "Take Snapshot" a live control on a running machine.
+    /// A dead button plus a banner saying "shut it down yourself" makes the
+    /// user leave for UTM and come back; offering the shutdown as the first
+    /// step of the same operation keeps them here and keeps the safety rule
+    /// intact — the write still happens only once the machine is really down.
+    var canBecomeWritableByShuttingDown: Bool {
+        guard case .notStopped(let blocked) = blocker else { return false }
+        return (blocked == .running || blocked == .paused) && canStop
+    }
+
+    /// Either writable now, or one clean shutdown away from it.
+    var canReachWritableState: Bool {
+        canModifyDisks || canBecomeWritableByShuttingDown
+    }
 
     /// Starting is offered only for machines UTM actually manages.
     var canStart: Bool {

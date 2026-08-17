@@ -52,7 +52,7 @@ struct RestoreSheet: View {
             // Spells out every step that will happen, in order. A single
             // confirmation that quietly shuts a machine down would be a
             // surprise, however convenient.
-            VStack(alignment: .leading, spacing: 8) {
+            StepList {
                 if needsShutdown {
                     Step(number: 1, text: String(localized: "Shut “\(vm?.name ?? "")” down — a disk cannot be rolled back while in use."))
                 }
@@ -70,9 +70,6 @@ struct RestoreSheet: View {
                     )
                 }
             }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .noticeSurface(.secondary)
 
             Toggle(isOn: $keepSafetyCopy) {
                 VStack(alignment: .leading, spacing: 2) {
@@ -141,25 +138,6 @@ struct RestoreSheet: View {
         mustKeepSafetyCopy
             ? String(localized: "Required for machines with several disks: if a rollback fails partway it cannot be undone, and this is the only way back.")
             : String(localized: "Recommended. Creates an extra restore point so this step stays reversible.")
-    }
-}
-
-private struct Step: View {
-    let number: Int
-    let text: String
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text("\(number)")
-                .font(.caption2.weight(.bold))
-                .foregroundStyle(.white)
-                .frame(width: 16, height: 16)
-                .background(Circle().fill(.secondary))
-            Text(text)
-                .font(.callout)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-        }
     }
 }
 

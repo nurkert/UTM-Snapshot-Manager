@@ -33,9 +33,11 @@ struct AppCommands: Commands {
     var body: some Commands {
 
         CommandGroup(replacing: .newItem) {
+            // Enabled for a running machine too: the dialog then offers the
+            // shutdown as the first step instead of refusing.
             Button("Take Snapshot…") { model.beginNewSnapshot() }
                 .keyboardShortcut("n", modifiers: .command)
-                .disabled(vm?.canModifyDisks != true || isBusy)
+                .disabled(vm?.canReachWritableState != true || isBusy)
         }
 
         CommandMenu("Machine") {
@@ -109,6 +111,12 @@ struct AppCommands: Commands {
             .keyboardShortcut("b", modifiers: .command)
             .disabled(snapshot == nil || vm == nil)
 
+            Button("Add or Edit Note…") {
+                if let snapshot, let vm { model.sheet = .note(snapshot, machine: vm.id) }
+            }
+            .keyboardShortcut("n", modifiers: [.command, .option])
+            .disabled(snapshot == nil || vm == nil)
+
             Button("Export…") {
                 if let snapshot, let vm { Task { await model.exportSnapshot(snapshot, on: vm.id) } }
             }
@@ -134,7 +142,7 @@ struct AppCommands: Commands {
         }
 
         CommandGroup(replacing: .help) {
-            Button("Quick Introduction") { model.showsWelcome = true }
+            Button("Quick Introduction") { model.sheet = .welcome }
             Divider()
             Button("Project Page on GitHub") {
                 if let url = URL(string: "https://github.com/nurkert/UTM-Snapshot-Manager") {

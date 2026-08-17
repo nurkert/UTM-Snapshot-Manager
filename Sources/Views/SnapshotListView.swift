@@ -38,7 +38,7 @@ struct SnapshotListView: View {
         .scrollContentBackground(.hidden)
         // Return activates the selected row, matching Finder and Mail.
         .onKeyPress(.return) {
-            guard let snapshot = model.selectedSnapshot, vm.canModifyDisks, snapshot.isComplete else { return .ignored }
+            guard let snapshot = model.selectedSnapshot, vm.canReachWritableState, snapshot.isComplete else { return .ignored }
             model.sheet = .restore(snapshot, machine: vm.id, restartAfter: false)
             return .handled
         }
@@ -47,14 +47,17 @@ struct SnapshotListView: View {
     @ViewBuilder
     private func menu(for snapshot: Snapshot) -> some View {
         Button("Restore…") { model.sheet = .restore(snapshot, machine: vm.id, restartAfter: false) }
-            .disabled(!vm.canModifyDisks)
+            .disabled(!vm.canReachWritableState)
         Button("Restore and Start…") { model.sheet = .restore(snapshot, machine: vm.id, restartAfter: true) }
-            .disabled(!vm.canModifyDisks || !vm.isRegisteredWithUTM)
+            .disabled(!vm.canReachWritableState || !vm.isRegisteredWithUTM)
 
         Divider()
 
         Button(model.isBaseline(snapshot, in: vm) ? "Remove as Baseline" : "Set as Baseline") {
             model.setBaseline(model.isBaseline(snapshot, in: vm) ? nil : snapshot, for: vm)
+        }
+        Button(model.note(for: snapshot, in: vm) == nil ? "Add Note…" : "Edit Note…") {
+            model.sheet = .note(snapshot, machine: vm.id)
         }
         Button("Export…") { Task { await model.exportSnapshot(snapshot, on: vm.id) } }
 
@@ -115,13 +118,16 @@ struct SnapshotRow: View {
                 }
                 .secondaryActionStyle()
                 .controlSize(.small)
-                .disabled(!vm.canModifyDisks || !snapshot.isComplete)
+                .disabled(!vm.canReachWritableState || !snapshot.isComplete)
 
                 Menu {
                     Button("Restore and Start…") { model.sheet = .restore(snapshot, machine: vm.id, restartAfter: true) }
-                        .disabled(!vm.canModifyDisks || !vm.isRegisteredWithUTM || !snapshot.isComplete)
+                        .disabled(!vm.canReachWritableState || !vm.isRegisteredWithUTM || !snapshot.isComplete)
                     Button(isBaseline ? "Remove as Baseline" : "Set as Baseline") {
                         model.setBaseline(isBaseline ? nil : snapshot, for: vm)
+                    }
+                    Button(model.note(for: snapshot, in: vm) == nil ? "Add Note…" : "Edit Note…") {
+                        model.sheet = .note(snapshot, machine: vm.id)
                     }
                     Button("Export…") { Task { await model.exportSnapshot(snapshot, on: vm.id) } }
                     Divider()
@@ -134,6 +140,16 @@ struct SnapshotRow: View {
                 .menuIndicator(.hidden)
                 .frame(width: 22)
                 .accessibilityLabel("More actions for \(snapshot.name)")
+            }
+
+            if let note = model.note(for: snapshot, in: vm) {
+                Text(note)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 34)
+                    .textSelection(.enabled)
             }
 
             // Only machines with more than one disk have anything to expand.

@@ -18,50 +18,91 @@ struct MachineDetailView: View {
 
     // MARK: - Toolbar
 
+    /// Three fixed slots, always in the same place.
+    ///
+    /// An earlier version added and removed toolbar items as the machine's
+    /// state changed, so the buttons shifted sideways under the pointer the
+    /// moment a machine started. Controls that cannot be used are disabled and
+    /// say why in their tooltip instead.
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
-        if !vm.snapshots.isEmpty {
-            ToolbarItem(placement: .principal) {
-                Picker("View", selection: $model.detailMode) {
-                    ForEach(AppModel.DetailMode.allCases) { mode in
-                        Label(mode.label, systemImage: mode.symbol).tag(mode)
-                    }
+        ToolbarItem(placement: .automatic) {
+            Picker("View", selection: $model.detailMode) {
+                ForEach(AppModel.DetailMode.allCases) { mode in
+                    Label(mode.label, systemImage: mode.symbol).tag(mode)
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .help("Switch between a plain list and the branching view")
             }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .disabled(vm.snapshots.isEmpty)
+            .help("Switch between a plain list and the branching view")
         }
 
         ToolbarItemGroup(placement: .primaryAction) {
-            if vm.canStart {
-                Button {
-                    Task { await model.start(vm) }
-                } label: {
-                    Label("Start", systemImage: "play.fill")
-                }
-                .help("Start this machine in UTM (⇧⌘S)")
-            }
-            if vm.canStop {
-                Button {
-                    Task { await model.stop(vm, method: .request) }
-                } label: {
-                    Label("Shut Down", systemImage: "stop.fill")
-                }
-                .help("Ask the guest to shut down (⇧⌘P)")
-            }
+            powerButton
 
-            // Shown only when it can actually be used. A permanently greyed-out
-            // primary action teaches people to ignore the toolbar; the banner
-            // below explains the state instead.
-            if vm.canModifyDisks {
-                Button {
-                    model.beginNewSnapshot()
-                } label: {
-                    Label("Take Snapshot", systemImage: "camera.aperture")
-                }
-                .help("Save the current state (⌘N)")
+            Button {
+                model.beginNewSnapshot()
+            } label: {
+                Label("Take Snapshot", systemImage: "camera.aperture")
             }
+            .disabled(!vm.canReachWritableState)
+            .help(snapshotHelp)
+        }
+    }
+
+    /// One slot, two labels. Start and Shut Down are never both usable, so
+    /// giving them a button each only guarantees that one of them is always
+    /// greyed out.
+    private var powerButton: some View {
+        let isUp = vm.state == .running || vm.state == .paused
+        return Button {
+            Task {
+                if isUp {
+                    await model.stop(vm, method: .request)
+                } else {
+                    await model.start(vm)
+                }
+            }
+        } label: {
+            Label(isUp ? "Shut Down" : "Start", systemImage: isUp ? "stop.fill" : "play.fill")
+        }
+        .disabled(isUp ? !vm.canStop : !vm.canStart)
+        .help(powerHelp(isUp: isUp))
+    }
+
+    private func powerHelp(isUp: Bool) -> String {
+        guard vm.isRegisteredWithUTM else {
+            return String(localized: "UTM does not manage this machine, so it cannot be started from here.")
+        }
+        if isUp { return String(localized: "Ask the guest to shut down (⇧⌘P)") }
+        if vm.state == .unknown {
+            return String(localized: "UTM could not be asked what this machine is doing.")
+        }
+        return String(localized: "Start this machine in UTM (⇧⌘S)")
+    }
+
+    private var snapshotHelp: String {
+        if vm.canBecomeWritableByShuttingDown {
+            return String(localized: "Shut the machine down and save that state (⌘N)")
+        }
+        if vm.canModifyDisks {
+            return String(localized: "Save the current state (⌘N)")
+        }
+        guard let blocker = vm.blocker else { return String(localized: "Save the current state (⌘N)") }
+        switch blocker {
+        case .appleBackend:
+            return String(localized: "Apple Virtualization disks have no snapshots.")
+        case .noSupportedDisk:
+            return String(localized: "This machine has no writable qcow2 disk.")
+        case .unreadableDisk:
+            return String(localized: "One disk could not be read, so nothing is written.")
+        case .noAccess:
+            return String(localized: "macOS is blocking access to this machine's folder.")
+        case .notStopped(let state):
+            return state == .suspended
+                ? String(localized: "Start the machine and shut it down from inside the guest first.")
+                : String(localized: "The state of this machine is unknown, so nothing is written.")
         }
     }
 
@@ -87,7 +128,7 @@ struct MachineDetailView: View {
 
                 Spacer(minLength: 12)
 
-                if let baseline = model.baselineSnapshot, vm.canModifyDisks || vm.canStop {
+                if let baseline = model.baselineSnapshot {
                     Button {
                         model.sheet = .restore(baseline, machine: vm.id, restartAfter: true)
                     } label: {
@@ -96,6 +137,7 @@ struct MachineDetailView: View {
                     }
                     .primaryActionStyle()
                     .controlSize(.large)
+                    .disabled(!vm.canReachWritableState)
                     .help("Shut down, roll back to “\(baseline.name)”, and start again (⇧⌘↩)")
                 }
             }
@@ -140,12 +182,11 @@ struct MachineDetailView: View {
         } description: {
             Text("A restore point freezes the disk exactly as it is now. Take one before you install something risky, run an unknown binary, or hand the machine to someone else — getting back is then a single step.")
         } actions: {
-            if vm.canModifyDisks {
-                Button("Take Snapshot") { model.beginNewSnapshot() }
-                    .primaryActionStyle()
-            } else if vm.canStop {
-                Button("Shut Down First") { Task { await model.stop(vm, method: .request) } }
-                    .primaryActionStyle()
+            if vm.canReachWritableState {
+                Button(vm.canBecomeWritableByShuttingDown ? "Shut Down & Take Snapshot" : "Take Snapshot") {
+                    model.beginNewSnapshot()
+                }
+                .primaryActionStyle()
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -252,9 +293,13 @@ struct BlockerBanner: View {
         case .notStopped(let state):
             switch state {
             case .running:
-                return String(localized: "Changes are disabled while the machine is using its disk. Writing now risks a corrupted file system, because unwritten caches never reach the disk.")
+                return vm.canStop
+                    ? String(localized: "Nothing is written while the machine is using its disk — unwritten caches would never reach it. Taking a restore point or rolling one back starts by shutting the machine down, and asks you first.")
+                    : String(localized: "Changes are disabled while the machine is using its disk. Writing now risks a corrupted file system, because unwritten caches never reach the disk.")
             case .paused:
-                return String(localized: "A paused machine still holds its disk open. Resume it and shut it down properly.")
+                return vm.canStop
+                    ? String(localized: "A paused machine still holds its disk open. Any change here begins by shutting it down, and asks you first.")
+                    : String(localized: "A paused machine still holds its disk open. Resume it and shut it down properly.")
             case .suspended:
                 return String(localized: "UTM parked the memory state on the disk. Start the machine and shut it down from inside the guest, then you're good to go.")
             default:

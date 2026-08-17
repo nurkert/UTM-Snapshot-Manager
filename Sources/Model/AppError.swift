@@ -48,10 +48,18 @@ enum AppError: LocalizedError, Equatable {
     /// UTM is not installed, so the machine cannot be controlled from here.
     case utmMissing
 
+    /// The volume holding the machine's disks has almost nothing left. Checked
+    /// before a write rather than discovered halfway through one: qcow2 grows
+    /// as the guest writes, and a `qemu-img` run that runs out of room partway
+    /// is exactly the situation this app exists to avoid.
+    case lowDiskSpace(volume: String, freeBytes: Int64)
+
     var errorDescription: String? {
         switch self {
         case .qemuMissing:
             return String(localized: "QEMU is not installed.")
+        case .lowDiskSpace(let volume, let free):
+            return String(localized: "“\(volume)” has only \(free.formatted(.byteCount(style: .file))) left.")
         case .notStopped(let vm, let state):
             switch state {
             case .running: return String(localized: "“\(vm)” is running.")
@@ -86,6 +94,9 @@ enum AppError: LocalizedError, Equatable {
         switch self {
         case .qemuMissing:
             return String(localized: "Install QEMU with “brew install qemu”, then click Check Again.")
+
+        case .lowDiskSpace:
+            return String(localized: "Nothing was written. A restore point costs little at first, but the disk image grows as the machine writes to it, and running out of room mid-write is what damages an image. Free some space and try again.")
 
         case .notStopped(let vm, let state):
             switch state {

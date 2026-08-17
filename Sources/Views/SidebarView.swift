@@ -14,6 +14,10 @@ struct SidebarView: View {
                         .foregroundStyle(.secondary)
                         .padding(.vertical, 6)
                         .fixedSize(horizontal: false, vertical: true)
+                        // Otherwise it behaves like a machine: highlights on
+                        // click and takes the arrow-key focus.
+                        .selectionDisabled()
+                        .listRowSeparator(.hidden)
                 }
                 ForEach(model.machines) { vm in
                     SidebarRow(vm: vm, showsLocation: model.ambiguousNames.contains(vm.name))
