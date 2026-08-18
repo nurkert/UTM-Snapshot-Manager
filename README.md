@@ -1,9 +1,27 @@
+<div align="center">
+
+<img src="Resources/Assets.xcassets/AppIcon.appiconset/icon_256x256@2x.png" width="120" alt="UTM Snapshot Manager">
+
 # UTM Snapshot Manager
 
-[![CI](https://github.com/nurkert/UTM-Snapshot-Manager/actions/workflows/ci.yml/badge.svg)](https://github.com/nurkert/UTM-Snapshot-Manager/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/nurkert/UTM-Snapshot-Manager?sort=semver)](https://github.com/nurkert/UTM-Snapshot-Manager/releases)
-[![Platform](https://img.shields.io/badge/macOS-14%2B-lightgrey)](#requirements)
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
+### Restore points for UTM virtual machines — the snapshot interface UTM never shipped, as a native macOS app.
+
+[![CI](https://img.shields.io/github/actions/workflow/status/nurkert/UTM-Snapshot-Manager/ci.yml?branch=main&style=flat-square&logo=githubactions&logoColor=white&label=CI)](https://github.com/nurkert/UTM-Snapshot-Manager/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/nurkert/UTM-Snapshot-Manager?sort=semver&style=flat-square&logo=github&label=release)](https://github.com/nurkert/UTM-Snapshot-Manager/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/nurkert/UTM-Snapshot-Manager/total?style=flat-square&logo=github&label=downloads)](https://github.com/nurkert/UTM-Snapshot-Manager/releases)
+[![Platform](https://img.shields.io/badge/macOS-14%2B-000000?style=flat-square&logo=apple&logoColor=white)](#-requirements)
+[![Swift](https://img.shields.io/badge/Swift-5.0-F05138?style=flat-square&logo=swift&logoColor=white)](https://swift.org)
+[![License](https://img.shields.io/badge/License-Apache%202.0-4c8eda?style=flat-square)](LICENSE)
+
+[**Why it exists**](#-why-it-exists) · [**Capabilities**](#-capabilities) · [**Install**](#-installation) · [**Docs**](#-documentation) · [**Releases**](https://github.com/nurkert/UTM-Snapshot-Manager/releases)
+
+</div>
+
+<br>
+
+<p align="center">
+  <img src="Screenshots/main-window.png" alt="UTM Snapshot Manager — the branching restore-point view" width="880">
+</p>
 
 Restore-point management for [UTM](https://mac.getutm.app) virtual machines, as a native macOS
 application.
@@ -14,11 +32,9 @@ it does support snapshots on `qcow2` disks — it simply has no face. This is th
 for repeated use rather than the occasional rescue: mark a known-good state, work, and return
 to it in one confirmed operation.
 
-![UTM Snapshot Manager](Screenshots/main-window.png)
-
 ---
 
-## Why it exists
+## 🧭 Why it exists
 
 Rolling a virtual disk back is destructive and irreversible. A tool that does it has exactly
 one job beyond the mechanics: never do it to a machine that is in use, and never do it to the
@@ -35,9 +51,16 @@ This application treats those three as correctness requirements, not edge cases.
 reasoning, the failure modes and the limits are written down in
 [docs/security-model.md](docs/security-model.md).
 
+Every restore spells out what it will do before it does it, and keeps a pre-restore point by
+default so the step stays reversible:
+
+<p align="center">
+  <img src="Screenshots/restore-dialog.png" alt="Restore confirmation dialog listing the three steps — shut the machine down, save the current state as a new restore point, then roll the disk back — with “Save the current state first” checked" width="620">
+</p>
+
 ---
 
-## Capabilities
+## ✨ Capabilities
 
 | Area | What it does |
 | --- | --- |
@@ -55,7 +78,7 @@ reasoning, the failure modes and the limits are written down in
 
 ---
 
-## Requirements
+## 🧰 Requirements
 
 | | |
 | --- | --- |
@@ -66,7 +89,7 @@ reasoning, the failure modes and the limits are written down in
 
 ---
 
-## Installation
+## 📦 Installation
 
 **Disk image** — download from [Releases](https://github.com/nurkert/UTM-Snapshot-Manager/releases),
 drag to Applications, then right-click the app once and choose **Open**. The build is signed
@@ -84,7 +107,7 @@ cd UTM-Snapshot-Manager
 The script installs missing prerequisites via Homebrew, builds a universal binary and places
 it in `/Applications`.
 
-### Permissions requested on first launch
+### 🔐 Permissions requested on first launch
 
 | Permission | Why | If denied |
 | --- | --- | --- |
@@ -97,7 +120,7 @@ than to a guess.
 
 ---
 
-## Documentation
+## 📚 Documentation
 
 | Document | Contents |
 | --- | --- |
@@ -107,7 +130,7 @@ than to a guess.
 
 ---
 
-## Verification
+## ✅ Verification
 
 Every push runs the full suite on a clean machine:
 
@@ -125,7 +148,7 @@ snapshot name containing shell metacharacters being stored rather than executed.
 
 ---
 
-## Relationship to the upstream project
+## 🔀 Relationship to the upstream project
 
 A fork of [Metamogul/UTM-Snapshot-Manager](https://github.com/Metamogul/UTM-Snapshot-Manager),
 rewritten. The original was explicitly a proof of concept.
@@ -143,7 +166,7 @@ rewritten. The original was explicitly a proof of concept.
 
 ---
 
-## Support and contributing
+## 🤝 Support and contributing
 
 Issues and pull requests are welcome at
 [nurkert/UTM-Snapshot-Manager](https://github.com/nurkert/UTM-Snapshot-Manager).
@@ -153,6 +176,6 @@ machine is QEMU- or Apple-backed, how many disks it has, and the exact wording o
 the application showed. Output from `Scripts/run-tests.sh` is helpful for anything that looks
 like a snapshot-handling fault.
 
-## License
+## 📄 License
 
 Apache 2.0, as the upstream project. See [LICENSE](LICENSE).
