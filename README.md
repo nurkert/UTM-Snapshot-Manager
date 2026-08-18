@@ -4,16 +4,16 @@
 
 # UTM Snapshot Manager
 
-### Restore points for UTM virtual machines — the snapshot interface UTM never shipped, as a native macOS app.
+### Restore points for UTM virtual machines, in a native macOS app.
 
 [![CI](https://img.shields.io/github/actions/workflow/status/nurkert/UTM-Snapshot-Manager/ci.yml?branch=main&style=flat-square&logo=githubactions&logoColor=white&label=CI)](https://github.com/nurkert/UTM-Snapshot-Manager/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/nurkert/UTM-Snapshot-Manager?sort=semver&style=flat-square&logo=github&label=release)](https://github.com/nurkert/UTM-Snapshot-Manager/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/nurkert/UTM-Snapshot-Manager/total?style=flat-square&logo=github&label=downloads)](https://github.com/nurkert/UTM-Snapshot-Manager/releases)
-[![Platform](https://img.shields.io/badge/macOS-14%2B-000000?style=flat-square&logo=apple&logoColor=white)](#-requirements)
+[![Platform](https://img.shields.io/badge/macOS-14%2B-000000?style=flat-square&logo=apple&logoColor=white)](#requirements)
 [![Swift](https://img.shields.io/badge/Swift-5.0-F05138?style=flat-square&logo=swift&logoColor=white)](https://swift.org)
 [![License](https://img.shields.io/badge/License-Apache%202.0-4c8eda?style=flat-square)](LICENSE)
 
-[**Why it exists**](#-why-it-exists) · [**Capabilities**](#-capabilities) · [**Install**](#-installation) · [**Docs**](#-documentation) · [**Releases**](https://github.com/nurkert/UTM-Snapshot-Manager/releases)
+[**Why it exists**](#why-it-exists) · [**Capabilities**](#capabilities) · [**Install**](#installation) · [**Docs**](#documentation) · [**Releases**](https://github.com/nurkert/UTM-Snapshot-Manager/releases)
 
 </div>
 
@@ -28,13 +28,13 @@ application.
 
 UTM has no snapshot interface of its own; the feature request was
 [closed as *not planned*](https://github.com/utmapp/UTM/issues/6020). The QEMU backend beneath
-it does support snapshots on `qcow2` disks — it simply has no face. This is that face, built
-for repeated use rather than the occasional rescue: mark a known-good state, work, and return
-to it in one confirmed operation.
+it does support snapshots on `qcow2` disks, there has just never been a way to reach them.
+This app is that way, meant for regular use rather than the occasional rescue: mark a
+known-good state, work, then roll back to it in one confirmed step.
 
 ---
 
-## 🧭 Why it exists
+## Why it exists
 
 Rolling a virtual disk back is destructive and irreversible. A tool that does it has exactly
 one job beyond the mechanics: never do it to a machine that is in use, and never do it to the
@@ -47,12 +47,12 @@ wrong machine. Both are easier to get wrong than they look.
 - A machine with **several disks** must be rolled back as one unit, or the guest boots with
   its disks at different points in time.
 
-This application treats those three as correctness requirements, not edge cases. The
-reasoning, the failure modes and the limits are written down in
+The app treats all three as correctness requirements, not edge cases. The reasoning, the
+failure modes and the limits are written down in
 [docs/security-model.md](docs/security-model.md).
 
-Every restore spells out what it will do before it does it, and keeps a pre-restore point by
-default so the step stays reversible:
+Before a restore runs, it shows you each step, and by default it saves a pre-restore point so
+you can undo it:
 
 <p align="center">
   <img src="Screenshots/restore-dialog.png" alt="Restore confirmation dialog listing the three steps — shut the machine down, save the current state as a new restore point, then roll the disk back — with “Save the current state first” checked" width="620">
@@ -60,7 +60,7 @@ default so the step stays reversible:
 
 ---
 
-## ✨ Capabilities
+## Capabilities
 
 | Area | What it does |
 | --- | --- |
@@ -78,7 +78,7 @@ default so the step stays reversible:
 
 ---
 
-## 🧰 Requirements
+## Requirements
 
 | | |
 | --- | --- |
@@ -89,7 +89,7 @@ default so the step stays reversible:
 
 ---
 
-## 📦 Installation
+## Installation
 
 **Disk image** — download from [Releases](https://github.com/nurkert/UTM-Snapshot-Manager/releases),
 drag to Applications, then right-click the app once and choose **Open**. The build is signed
@@ -107,7 +107,7 @@ cd UTM-Snapshot-Manager
 The script installs missing prerequisites via Homebrew, builds a universal binary and places
 it in `/Applications`.
 
-### 🔐 Permissions requested on first launch
+### Permissions requested on first launch
 
 | Permission | Why | If denied |
 | --- | --- | --- |
@@ -120,7 +120,7 @@ than to a guess.
 
 ---
 
-## 📚 Documentation
+## Documentation
 
 | Document | Contents |
 | --- | --- |
@@ -130,7 +130,7 @@ than to a guess.
 
 ---
 
-## ✅ Verification
+## Verification
 
 Every push runs the full suite on a clean machine:
 
@@ -148,7 +148,7 @@ snapshot name containing shell metacharacters being stored rather than executed.
 
 ---
 
-## 🔀 Relationship to the upstream project
+## Relationship to the upstream project
 
 A fork of [Metamogul/UTM-Snapshot-Manager](https://github.com/Metamogul/UTM-Snapshot-Manager),
 rewritten. The original was explicitly a proof of concept.
@@ -166,7 +166,7 @@ rewritten. The original was explicitly a proof of concept.
 
 ---
 
-## 🤝 Support and contributing
+## Support and contributing
 
 Issues and pull requests are welcome at
 [nurkert/UTM-Snapshot-Manager](https://github.com/nurkert/UTM-Snapshot-Manager).
@@ -176,6 +176,6 @@ machine is QEMU- or Apple-backed, how many disks it has, and the exact wording o
 the application showed. Output from `Scripts/run-tests.sh` is helpful for anything that looks
 like a snapshot-handling fault.
 
-## 📄 License
+## License
 
 Apache 2.0, as the upstream project. See [LICENSE](LICENSE).
